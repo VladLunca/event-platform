@@ -1,0 +1,30 @@
+# ── Environment variables (never commit secrets) ───────────────
+.env
+.env.local
+.env.*.local
+
+# ── Maven build output ─────────────────────────────────────────
+**/target/
+**/.mvn/wrapper/maven-wrapper.jar
+
+# ── Node / Angular ─────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/.env
+
+# ── IDE ────────────────────────────────────────────────────────
+.idea/
+**/.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+
+# ── OS ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Logs ───────────────────────────────────────────────────────
+*.log
+logs/

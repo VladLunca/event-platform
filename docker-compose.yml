@@ -1,0 +1,151 @@
+services:
+
+  # ── Databases ─────────────────────────────────────────────────
+
+  auth-db:
+    image: mysql:8.0
+    container_name: auth-db
+    environment:
+      MYSQL_DATABASE: ${AUTH_DB_NAME}
+      MYSQL_USER: ${AUTH_DB_USER}
+      MYSQL_PASSWORD: ${AUTH_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${AUTH_DB_ROOT_PASSWORD}
+    ports:
+      - "${AUTH_DB_PORT}:3306"
+    volumes:
+      - auth-db-data:/var/lib/mysql
+    networks:
+      - event-platform-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  event-db:
+    image: mysql:8.0
+    container_name: event-db
+    environment:
+      MYSQL_DATABASE: ${EVENT_DB_NAME}
+      MYSQL_USER: ${EVENT_DB_USER}
+      MYSQL_PASSWORD: ${EVENT_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${EVENT_DB_ROOT_PASSWORD}
+    ports:
+      - "${EVENT_DB_PORT}:3306"
+    volumes:
+      - event-db-data:/var/lib/mysql
+    networks:
+      - event-platform-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  client-db:
+    image: mongo:7.0
+    container_name: client-db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${CLIENT_DB_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${CLIENT_DB_PASSWORD}
+      MONGO_INITDB_DATABASE: ${CLIENT_DB_NAME}
+    ports:
+      - "${CLIENT_DB_PORT}:27017"
+    volumes:
+      - client-db-data:/data/db
+    networks:
+      - event-platform-net
+
+  # ── Services ──────────────────────────────────────────────────
+
+  auth-service:
+    build:
+      context: ./auth-service
+    container_name: auth-service
+    environment:
+      DB_HOST: auth-db
+      DB_PORT: 3306
+      DB_NAME: ${AUTH_DB_NAME}
+      DB_USER: ${AUTH_DB_USER}
+      DB_PASSWORD: ${AUTH_DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS}
+      GRPC_PORT: 9090
+    ports:
+      - "8090:8080"
+      - "9090:9090"
+    depends_on:
+      auth-db:
+        condition: service_healthy
+    networks:
+      - event-platform-net
+
+  event-service:
+    build:
+      context: ./event-service
+    container_name: event-service
+    environment:
+      DB_HOST: event-db
+      DB_PORT: 3306
+      DB_NAME: ${EVENT_DB_NAME}
+      DB_USER: ${EVENT_DB_USER}
+      DB_PASSWORD: ${EVENT_DB_PASSWORD}
+      AUTH_GRPC_HOST: auth-service
+      AUTH_GRPC_PORT: 9090
+      SERVER_PORT: 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      event-db:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    networks:
+      - event-platform-net
+
+  client-service:
+    build:
+      context: ./client-service
+    container_name: client-service
+    environment:
+      MONGO_HOST: client-db
+      MONGO_PORT: 27017
+      MONGO_DB: ${CLIENT_DB_NAME}
+      MONGO_USER: ${CLIENT_DB_USER}
+      MONGO_PASSWORD: ${CLIENT_DB_PASSWORD}
+      AUTH_GRPC_HOST: auth-service
+      AUTH_GRPC_PORT: 9090
+      SERVER_PORT: 8081
+    ports:
+      - "8081:8081"
+    depends_on:
+      client-db:
+        condition: service_started
+      auth-service:
+        condition: service_started
+    networks:
+      - event-platform-net
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: frontend
+    ports:
+      - "4200:80"
+    depends_on:
+      - auth-service
+      - event-service
+      - client-service
+    networks:
+      - event-platform-net
+
+# ── Network ───────────────────────────────────────────────────
+networks:
+  event-platform-net:
+    driver: bridge
+
+# ── Volumes ───────────────────────────────────────────────────
+volumes:
+  auth-db-data:
+  event-db-data:
+  client-db-data:
