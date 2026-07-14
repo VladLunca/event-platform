@@ -421,8 +421,8 @@ CLIENT request → client-service → event-service /validate-ticket/{code}
 |--------|------|-------------|-------|
 | `id` | INT | PK, AUTO_INCREMENT | |
 | `email` | VARCHAR | UNIQUE, NOT NULL | Used as username |
-| `parola` | VARCHAR | NOT NULL | BCrypt hashed |
-| `rol` | ENUM | NOT NULL | `ADMIN`, `OWNER_EVENT`, `CLIENT` |
+| `password` | VARCHAR | NOT NULL | BCrypt hashed |
+| `role` | ENUM | NOT NULL | `ADMIN`, `OWNER_EVENT`, `CLIENT` |
 
 ### Event Service — MySQL
 
@@ -471,22 +471,22 @@ CLIENT request → client-service → event-service /validate-ticket/{code}
 {
   "_id": "ObjectID",
   "email": "client@example.com",
-  "prenume": "Ion",
-  "nume": "Popescu",
-  "info_publica": true,
+  "first_name": "Ion",
+  "last_name": "Popescu",
+  "public_info": true,
   "social_media": {
     "linkedin": "https://linkedin.com/in/...",
     "public": false
   },
-  "bilete": [
+  "tickets": [
     "TKT-2025-ABC123",
     "TKT-2025-DEF456"
   ]
 }
 ```
 
-Fields `prenume`, `nume`, `social_media` are optional and may be absent from the document.  
-`info_publica` flag controls visibility to users with `OWNER_EVENT` role.
+Fields `first_name`, `last_name`, `social_media` are optional and may be absent from the document.  
+`public_info` flag controls visibility to users with `OWNER_EVENT` role.
 
 ---
 
