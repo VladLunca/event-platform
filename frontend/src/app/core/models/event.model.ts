@@ -1,5 +1,5 @@
 export interface EventModel {
-  id: number;
+  eventResponseId: number;
   name: string;
   location?: string;
   description?: string;
@@ -8,19 +8,19 @@ export interface EventModel {
 }
 
 export interface EventPackage {
-  id: number;
+  packageResponseId: number;
   name: string;
   location?: string;
   description?: string;
   seatCount?: number;
+  availableSeats?: number;
   _links?: Record<string, { href: string }>;
 }
 
 export interface Ticket {
-  code: string;
-  event?: string;
-  location?: string;
-  packageEvents?: string[];
+  ticketResponseId: string;
+  ownerUserId?: string;
+  _links?: Record<string, { href: string }>;
 }
 
 export interface PagedResponse<T> {

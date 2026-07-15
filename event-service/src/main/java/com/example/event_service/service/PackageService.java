@@ -52,8 +52,8 @@ public class PackageService {
 
     @Transactional
     public EventPackage createPackage(Long eventId, CreatePackageRequest request, String userId) {
-        if (eventRepository.existsByEventIdAndOwnerUserId(eventId, userId)) {
-            throw new NotFoundException("Evenimentul nu a fost gasit sau nu il detineti");
+        if (!eventRepository.existsByEventIdAndOwnerUserId(eventId, userId)) {
+            throw new ForbiddenException("Nu detineti acest eveniment");
         }
         Event event = eventRepository.findById(eventId).orElseThrow(() -> new NotFoundException("Evenimentul nu a fost gasit"));
         EventPackage pkg = new EventPackage();
@@ -67,8 +67,8 @@ public class PackageService {
 
     @Transactional
     public EventPackage updatePackage(Long eventId, Long packageId, CreatePackageRequest request, String userId) {
-        if (eventRepository.existsByEventIdAndOwnerUserId(eventId, userId)) {
-            throw new NotFoundException("Evenimentul nu a fost gasit sau nu il detineti");
+        if (!eventRepository.existsByEventIdAndOwnerUserId(eventId, userId)) {
+            throw new ForbiddenException("Nu detineti acest eveniment");
         }
         EventPackage pkg = getPackage(eventId, packageId);
         pkg.setName(request.getName());
@@ -80,8 +80,8 @@ public class PackageService {
 
     @Transactional
     public void deletePackage(Long eventId, Long packageId, String userId) {
-        if (eventRepository.existsByEventIdAndOwnerUserId(eventId, userId)) {
-            throw new NotFoundException("Evenimentul nu a fost gasit sau nu il detineti");
+        if (!eventRepository.existsByEventIdAndOwnerUserId(eventId, userId)) {
+            throw new ForbiddenException("Nu detineti acest eveniment");
         }
         packageRepository.delete(getPackage(eventId, packageId));
     }

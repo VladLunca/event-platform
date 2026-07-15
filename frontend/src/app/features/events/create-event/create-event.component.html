@@ -1,0 +1,32 @@
+<div class="container">
+  <a routerLink="/events" class="back">← Inapoi</a>
+  <h1>Eveniment nou</h1>
+
+  @if (error()) {
+    <p class="error">{{ error() }}</p>
+  }
+
+  <form [formGroup]="form" (ngSubmit)="submit()">
+    <div class="field">
+      <label for="name">Nume *</label>
+      <input id="name" type="text" formControlName="name" />
+      @if (form.get('name')?.invalid && form.get('name')?.touched) {
+        <span class="validation">Numele este obligatoriu</span>
+      }
+    </div>
+
+    <div class="field">
+      <label for="location">Locatie</label>
+      <input id="location" type="text" formControlName="location" />
+    </div>
+
+    <div class="field">
+      <label for="description">Descriere</label>
+      <textarea id="description" formControlName="description" rows="4"></textarea>
+    </div>
+
+    <button type="submit" [disabled]="form.invalid || loading()">
+      {{ loading() ? 'Se creeaza...' : 'Creeaza eveniment' }}
+    </button>
+  </form>
+</div>

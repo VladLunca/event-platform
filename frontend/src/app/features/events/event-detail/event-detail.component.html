@@ -1,0 +1,140 @@
+<div class="container">
+  <a routerLink="/events" class="back">← Inapoi la evenimente</a>
+
+  @if (loading()) {
+    <p>Se incarca...</p>
+  }
+
+  @if (error()) {
+    <p class="error">{{ error() }}</p>
+  }
+
+  @if (event(); as ev) {
+    <div class="event-header">
+      <div class="event-title-row">
+        <h1>{{ ev.name }}</h1>
+        @if (isOwner()) {
+          <div class="owner-actions">
+            <a [routerLink]="['/events', ev.eventResponseId, 'edit']" class="btn-edit">Editeaza</a>
+            <button (click)="deleteEvent()" class="btn-delete">Sterge eveniment</button>
+          </div>
+        }
+      </div>
+      @if (ev.location) {
+        <p class="location">{{ ev.location }}</p>
+      }
+      @if (ev.description) {
+        <p class="description">{{ ev.description }}</p>
+      }
+    </div>
+
+    <div class="section-header">
+      <h2>Pachete</h2>
+      @if (isOwner()) {
+        <button (click)="showPackageForm.set(!showPackageForm())" class="btn-secondary">
+          {{ showPackageForm() ? 'Anuleaza' : '+ Pachet nou' }}
+        </button>
+      }
+    </div>
+
+    @if (showPackageForm()) {
+      <div class="package-form">
+        <h3>Pachet nou</h3>
+
+        @if (packageError()) {
+          <p class="error">{{ packageError() }}</p>
+        }
+
+        <form [formGroup]="packageForm" (ngSubmit)="createPackage()">
+          <div class="field">
+            <label>Nume *</label>
+            <input type="text" formControlName="name" />
+            @if (packageForm.get('name')?.invalid && packageForm.get('name')?.touched) {
+              <span class="validation">Numele este obligatoriu</span>
+            }
+          </div>
+          <div class="field">
+            <label>Locatie</label>
+            <input type="text" formControlName="location" />
+          </div>
+          <div class="field">
+            <label>Descriere</label>
+            <input type="text" formControlName="description" />
+          </div>
+          <div class="field">
+            <label>Numar locuri *</label>
+            <input type="number" formControlName="seatCount" min="1" />
+            @if (packageForm.get('seatCount')?.invalid && packageForm.get('seatCount')?.touched) {
+              <span class="validation">Minim 1 loc</span>
+            }
+          </div>
+          <button type="submit" [disabled]="packageForm.invalid || packageLoading()">
+            {{ packageLoading() ? 'Se creeaza...' : 'Creeaza pachet' }}
+          </button>
+        </form>
+      </div>
+    }
+
+    @if (purchaseMessage()) {
+      <p class="message">{{ purchaseMessage() }}</p>
+    }
+
+    <div class="packages-grid">
+      @for (pkg of packages(); track pkg.packageResponseId) {
+        <div class="package-card">
+          <div class="pkg-header">
+            <h3>{{ pkg.name }}</h3>
+            @if (isOwner()) {
+              <button (click)="deletePackage(pkg)" class="btn-delete-sm">Sterge</button>
+            }
+          </div>
+          @if (pkg.location) {
+            <p class="location">{{ pkg.location }}</p>
+          }
+          @if (pkg.description) {
+            <p>{{ pkg.description }}</p>
+          }
+          <p class="seats">
+            Locuri: <strong>{{ pkg.availableSeats }}</strong> / {{ pkg.seatCount }}
+          </p>
+
+          @if (authService.hasRole('CLIENT')) {
+            <button
+              (click)="purchase(pkg)"
+              [disabled]="pkg.availableSeats === 0"
+              class="btn-buy">
+              {{ pkg.availableSeats === 0 ? 'Epuizat' : 'Cumpara bilet' }}
+            </button>
+          }
+
+          @if (isOwner()) {
+            <button (click)="toggleTickets(pkg)" class="btn-tickets">
+              {{ isPackageExpanded(pkg.packageResponseId) ? 'Ascunde bilete' : 'Vezi bilete' }}
+            </button>
+
+            @if (isPackageExpanded(pkg.packageResponseId)) {
+              <div class="tickets-list">
+                @if (ticketsMap()[pkg.packageResponseId]; as tickets) {
+                  @if (tickets.length === 0) {
+                    <p class="no-tickets">Niciun bilet vandut</p>
+                  } @else {
+                    @for (t of tickets; track t.ticketResponseId) {
+                      <div class="ticket-row">
+                        <span class="ticket-code">{{ t.ticketResponseId }}</span>
+                        <span class="ticket-owner">{{ t.ownerUserId }}</span>
+                      </div>
+                    }
+                  }
+                } @else {
+                  <p>Se incarca...</p>
+                }
+              </div>
+            }
+          }
+        </div>
+      } @empty {
+        <p>Nu exista pachete pentru acest eveniment.</p>
+      }
+    </div>
+  }
+</div>

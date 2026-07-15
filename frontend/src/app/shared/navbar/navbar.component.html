@@ -1,0 +1,13 @@
+<nav class="navbar">
+  <a routerLink="/events" class="brand">Event Platform</a>
+
+  <div class="links">
+    <a routerLink="/events">Evenimente</a>
+
+    @if (authService.hasRole('ADMIN')) {
+      <a routerLink="/admin/users">Utilizatori</a>
+    }
+
+    <button (click)="logout()">Deconectare</button>
+  </div>
+</nav>

@@ -1,0 +1,51 @@
+<div class="container">
+  <div class="header">
+    <h1>Evenimente</h1>
+    @if (authService.hasRole('OWNER_EVENT') || authService.hasRole('ADMIN')) {
+      <a routerLink="/events/create" class="btn-primary">+ Eveniment nou</a>
+    }
+  </div>
+
+  <div class="search">
+    <input
+      type="text"
+      placeholder="Cauta eveniment..."
+      [(ngModel)]="searchName"
+      (keyup.enter)="search()"
+    />
+    <button (click)="search()">Cauta</button>
+  </div>
+
+  @if (loading()) {
+    <p>Se incarca...</p>
+  }
+
+  @if (error()) {
+    <p class="error">{{ error() }}</p>
+  }
+
+  <div class="events-grid">
+    @for (event of events(); track event.eventResponseId) {
+      <div class="event-card">
+        <h3>{{ event.name }}</h3>
+        @if (event.location) {
+          <p class="location">{{ event.location }}</p>
+        }
+        @if (event.description) {
+          <p class="description">{{ event.description }}</p>
+        }
+        <a [routerLink]="['/events', event.eventResponseId]" class="btn-secondary">
+          Vezi detalii
+        </a>
+      </div>
+    } @empty {
+      <p>Nu exista evenimente.</p>
+    }
+  </div>
+
+  <div class="pagination">
+    <button (click)="prevPage()" [disabled]="currentPage === 0">Anterior</button>
+    <span>Pagina {{ currentPage + 1 }}</span>
+    <button (click)="nextPage()" [disabled]="events().length < pageSize">Urmator</button>
+  </div>
+</div>
