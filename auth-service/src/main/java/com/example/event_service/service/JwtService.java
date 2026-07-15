@@ -29,6 +29,7 @@ public class JwtService {
 
     public boolean isValid(String token) {
         try {
+            parseClaims(token);
             return true;
         } catch (Exception e) {
             return false;

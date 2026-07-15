@@ -1,6 +1,6 @@
 import { Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { tap } from 'rxjs/operators';
+import { tap, finalize } from 'rxjs/operators';
 import { Observable } from 'rxjs';
 import { AuthResponse, TokenPayload, Role } from '../models/user.model';
 
@@ -32,7 +32,7 @@ export class AuthService {
 
   logout(): Observable<unknown> {
     return this.http.post(`${this.apiUrl}/logout`, {}).pipe(
-      tap(() => this.clearSession())
+      finalize(() => this.clearSession())
     );
   }
 
