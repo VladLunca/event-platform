@@ -28,13 +28,13 @@ A microservices-based platform for managing artistic events, ticket packages, an
 
 ## Core Functionality
 
-**Event Management**: Users with the `OWNER_EVENT` role create and manage artistic events. Each event has a name, optional location, and description. Owners can define multiple ticket packages per event, each with a fixed seat count. Only the event owner can modify or delete their own events and packages. Admins have unrestricted access.
+**Event Management**: Users with the `OWNER_EVENT` role create and manage artistic events. Each event has a name, optional location, and description. Owners can define one or more ticket packages per event in a single operation, each with a fixed seat count. Only the event owner can modify or delete their own events and packages. Admins have unrestricted access. Event browsing is public — no account is required to list or view events.
 
-**Ticket Sales**: Clients browse public event and package listings and purchase tickets for any package with available seats. The system tracks sold tickets in real time and blocks purchases when a package reaches capacity. Each ticket is identified by a UUID generated at purchase time.
+**Ticket Sales**: Clients browse public event and package listings and purchase tickets for any package with available seats. The system tracks sold tickets in real time and blocks purchases when a package reaches capacity. Each ticket is identified by a UUID generated at purchase time. Immediately after purchase, the Angular client automatically registers the UUID in the client profile — no manual step required.
 
-**Client Profiles**: Clients maintain a personal profile stored in MongoDB with optional public information and social media links. After purchasing a ticket, the Angular frontend registers the ticket UUID in the client's profile through the client-service. The client-service validates ticket existence by querying the event-service before persisting the UUID.
+**Client Profiles**: Clients maintain a personal profile stored in MongoDB with optional public information and social media links. The profile page displays each registered ticket enriched with the event name, package name, and seat count — resolved live from the event-service. The client-service validates ticket ownership via a chain call to the event-service before persisting any UUID.
 
-**Account Administration**: A dedicated `ADMIN` role creates user accounts and assigns roles. Admins do not interact with event or client data.
+**Account Administration**: A self-registration page at `/register` allows anyone to create a `CLIENT` or `OWNER_EVENT` account. The `ADMIN` role can additionally create accounts with any role including `ADMIN`. Admins do not interact with event or client data.
 
 ---
 
@@ -80,7 +80,7 @@ flowchart TD
 | `/api/events` | `http://event-service:8080/events` | Prefix match, no trailing slash |
 | `/api/clients/` | `http://client-service:8081/clients/` | Trailing slash preserved |
 
-The `GET /events/tickets/{ticketId}` endpoint used by client-service for chain validation is **not** proxied by nginx — it is reachable only within the Docker network.
+The `GET /events/tickets/{ticketId}` endpoint is reachable both within the Docker network (used by client-service for chain validation) and externally via `/api/events/tickets/{ticketId}` (used by the Angular frontend to enrich ticket display in the profile page), because the `location /api/events` prefix rule in nginx matches all paths under that prefix.
 
 ---
 
@@ -99,17 +99,24 @@ sequenceDiagram
     ES->>ES: check availableSeats > 0
     ES-->>A: 201 { ticketResponseId: "uuid-..." }
 
+    Note over A: automatically registers ticket in profile
+
     A->>CS: POST /api/clients/{email}/tickets { ticketId: "uuid-..." }
     CS->>AS: gRPC Validate(token)
     AS-->>CS: valid=true, userId, role=CLIENT
     CS->>ES: GET /events/tickets/{ticketId}
-    ES-->>CS: 200 { ticketId, ownerUserId }
+    ES-->>CS: 200 { ticketId, ownerUserId, eventName, packageName, seatCount, ... }
     CS->>CS: verify ownerUserId == userId
     CS->>CS: append ticketId to client.tickets[]
-    CS-->>A: 200 OK
+    CS-->>A: 200 [updated ticket list]
+
+    Note over A: profile page enriches each UUID
+
+    A->>ES: GET /api/events/tickets/{ticketId}
+    ES-->>A: 200 { ticketId, eventName, packageName, seatCount }
 ```
 
-The chain call from client-service to event-service ensures the ticket UUID exists on the event-service before it is stored in MongoDB, preventing stale or fabricated UUIDs from entering the client profile.
+The chain call from client-service to event-service ensures the ticket UUID exists and belongs to the authenticated user before it is stored in MongoDB. The same `GET /events/tickets/{ticketId}` endpoint is also called by the Angular frontend to display human-readable ticket info (event name, package name, seat count) in the profile page.
 
 ---
 
@@ -182,7 +189,7 @@ gRPC Validate(token) → auth-service
                   └── authorized → process request
 ```
 
-Read endpoints for events and packages (`GET /events`, `GET /events/{id}`, `GET /events/{id}/packages`, `GET /events/{id}/packages/{packageId}`) are **public** — no token required.
+Read endpoints for events and packages (`GET /events`, `GET /events/{id}`, `GET /events/{id}/packages`, `GET /events/{id}/packages/{packageId}`) are **public** — no token required. The `/register` page (account creation) is also publicly accessible; the backend enforces role restrictions on what roles a caller can assign.
 
 ---
 
@@ -394,10 +401,10 @@ Results are sorted alphabetically by name.
 |--------|------|------|--------|-------------|
 | `GET` | `/events/{eventId}/packages/{packageId}/tickets` | OWNER_EVENT (own) or ADMIN | 200, 401, 403, 404 | List all tickets for a package |
 | `POST` | `/events/{eventId}/packages/{packageId}/tickets` | CLIENT | 201, 401, 403, 404, 409 | Purchase a ticket |
-| `GET` | `/events/{eventId}/packages/{packageId}/tickets/{ticketId}` | CLIENT (own), OWNER_EVENT (own), or ADMIN | 200, 401, 403, 404 | Get ticket by ID |
-| `GET` | `/events/tickets/{ticketId}` | Internal (service-to-service) | 200, 404 | Verify ticket existence — used by client-service chain call only; not proxied by nginx |
+| `GET` | `/events/{eventId}/packages/{packageId}/tickets/{ticketId}` | CLIENT (own), OWNER_EVENT (own), or ADMIN | 200, 401, 403, 404 | Get ticket by ID (HATEOAS) |
+| `GET` | `/events/tickets/{ticketId}` | Public (internal + frontend) | 200, 404 | Ticket detail lookup — used by client-service chain call and Angular profile page |
 
-#### Ticket response
+#### Ticket response — `GET /events/{eventId}/packages/{packageId}/tickets/{ticketId}`
 
 ```json
 {
@@ -411,6 +418,22 @@ Results are sorted alphabetically by name.
 ```
 
 `409 Conflict` is returned when all seats are sold. A CLIENT can view only their own ticket; an OWNER_EVENT can view any ticket for packages on their own event.
+
+#### Ticket detail response — `GET /events/tickets/{ticketId}`
+
+```json
+{
+  "ticketId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "ownerUserId": "42",
+  "eventId": 1,
+  "eventName": "Concert Iași",
+  "packageId": 3,
+  "packageName": "VIP",
+  "seatCount": 50
+}
+```
+
+This endpoint resolves the ticket → package → event chain in a single call. It is used by client-service (reads `ownerUserId` for ownership verification) and by the Angular profile page (reads `eventName`, `packageName`, `seatCount` for display). No authentication is required.
 
 ---
 
@@ -439,7 +462,7 @@ All endpoints require `Authorization: Bearer <token>`.
 
 | Method | Path | Auth | Status | Description |
 |--------|------|------|--------|-------------|
-| `POST` | `/clients/` | CLIENT | 201, 401, 409 | Create profile — email from request body must match the authenticated user |
+| `POST` | `/clients` or `/clients/` | CLIENT | 201, 401, 409 | Create profile — email from request body must match the authenticated user |
 | `GET` | `/clients/{email}` | CLIENT (own) or OWNER_EVENT | 200, 401, 403, 404 | Get profile — CLIENT sees all fields; OWNER_EVENT sees only public fields |
 | `PATCH` | `/clients/{email}` | CLIENT (own) | 200, 401, 403, 404 | Partial update — only provided fields are changed |
 | `DELETE` | `/clients/{email}` | CLIENT (own) | 204, 401, 403, 404 | Delete profile |
@@ -494,7 +517,7 @@ The chain call to `GET /events/tickets/{ticketId}` is made synchronously before 
 
 **gRPC for token validation**: event-service and client-service validate tokens via gRPC instead of REST to reduce per-request overhead (HTTP/2 multiplexing, binary Protobuf encoding, persistent connection).
 
-**Chain call for ticket registration**: After purchasing a ticket from event-service, the Angular client calls client-service to register the UUID. client-service performs a chain call to `GET /events/tickets/{ticketId}` to confirm the ticket exists and belongs to the caller before persisting it to MongoDB. This prevents stale or fabricated ticket UUIDs in client profiles.
+**Chain call for ticket registration**: After purchasing a ticket from event-service, the Angular client automatically calls client-service to register the UUID. client-service performs a synchronous chain call to `GET /events/tickets/{ticketId}` to confirm the ticket exists and that `ownerUserId` matches the authenticated user before persisting the UUID to MongoDB. This prevents stale or fabricated ticket UUIDs in client profiles. The same endpoint is also called by the Angular profile page to enrich each UUID with human-readable event and package info, avoiding a separate lookup service.
 
 **HATEOAS on event-service responses**: All event, package, and ticket responses include `_links`. This allows the frontend to discover related resources (e.g., navigate from an event to its packages list) without hard-coding URL structures.
 
@@ -599,7 +622,8 @@ event-platform/
 │   │   ├── controller/       EventController.java · PackageController.java
 │   │   │                     TicketController.java · TicketLookupController.java
 │   │   ├── dto/              CreateEventRequest.java · EventResponse.java
-│   │   │                     CreatePackageRequest.java · PackageResponse.java · TicketResponse.java
+│   │   │                     CreatePackageRequest.java · PackageResponse.java
+│   │   │                     TicketResponse.java · TicketDetailResponse.java
 │   │   ├── exception/        GlobalExceptionHandler.java · NotFoundException.java
 │   │   │                     ForbiddenException.java · UnauthorizedException.java
 │   │   ├── grpc/             TokenValidationService.java
@@ -632,7 +656,7 @@ event-platform/
 │       └── features/
 │           ├── auth/         login/
 │           ├── events/       event-list/ · event-detail/ · create-event/ · edit-event/
-│           ├── admin/        create-user/
+│           ├── admin/        create-user/   (route: /register — public)
 │           └── profile/      profile.component (ts · html · scss)
 │
 ├── nginx/
