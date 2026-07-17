@@ -69,11 +69,7 @@ public class EventController {
     }
 
     private EntityModel<EventResponse> toModel(Event event) {
-        EventResponse response = new EventResponse();
-        response.setEventResponseId(event.getEventId());
-        response.setName(event.getName());
-        response.setDescription(event.getDescription());
-        response.setLocation(event.getLocation());
+        EventResponse response = EventResponse.from(event);
         response.add(Link.of("/events/" + event.getEventId()).withSelfRel());
         response.add(Link.of("/events/" + event.getEventId() + "/packages").withRel("packages"));
         return EntityModel.of(response);

@@ -6,101 +6,149 @@ A microservices-based platform for managing artistic events, ticket packages, an
 
 ## Table of Contents
 
+- [Core Functionality](#core-functionality)
 - [Architecture](#architecture)
-- [Services](#services)
+- [Ticket Purchase Flow](#ticket-purchase-flow)
+- [Entity-Relationship Model](#entity-relationship-model)
 - [Security Model](#security-model)
 - [JWT Token Structure](#jwt-token-structure)
 - [gRPC Contract](#grpc-contract)
 - [REST API — Auth Service](#rest-api--auth-service)
 - [REST API — Event Service](#rest-api--event-service)
 - [REST API — Client Service](#rest-api--client-service)
+- [Key Design Decisions](#key-design-decisions)
 - [Database Schemas](#database-schemas)
+- [Project Structure](#project-structure)
 - [Environment Variables](#environment-variables)
 - [Running with Docker](#running-with-docker)
 - [Local Development](#local-development)
-- [Design Principles](#design-principles)
+- [Default Admin Account](#default-admin-account)
+
+---
+
+## Core Functionality
+
+**Event Management**: Users with the `OWNER_EVENT` role create and manage artistic events. Each event has a name, optional location, and description. Owners can define multiple ticket packages per event, each with a fixed seat count. Only the event owner can modify or delete their own events and packages. Admins have unrestricted access.
+
+**Ticket Sales**: Clients browse public event and package listings and purchase tickets for any package with available seats. The system tracks sold tickets in real time and blocks purchases when a package reaches capacity. Each ticket is identified by a UUID generated at purchase time.
+
+**Client Profiles**: Clients maintain a personal profile stored in MongoDB with optional public information and social media links. After purchasing a ticket, the Angular frontend registers the ticket UUID in the client's profile through the client-service. The client-service validates ticket existence by querying the event-service before persisting the UUID.
+
+**Account Administration**: A dedicated `ADMIN` role creates user accounts and assigns roles. Admins do not interact with event or client data.
 
 ---
 
 ## Architecture
 
-```
-                         ┌──────────────────────────────────────────────────┐
-                         │                event-platform-net                 │
-                         │                                                   │
-                         │   ┌─────────────────────────────────────────┐    │
-                         │   │         nginx reverse proxy (:80)        │    │
-Angular (:4200) ──HTTP──►│   │  /api/auth/   → auth-service:8080        │    │
-                         │   │  /api/events/ → event-service:8080       │    │
-                         │   │  /api/clients/→ client-service:8081      │    │
-                         │   └─────────────────────────────────────────┘    │
-                         │          │              │              │          │
-                         │          ▼              ▼              ▼          │
-                         │   auth-service   event-service  client-service   │
-                         │   REST :8080     REST :8080      REST :8081       │
-                         │   gRPC :9090         │                │           │
-                         │        ▲             │                │           │
-                         │        └─────────────┴────────────────┘          │
-                         │              gRPC token validation                │
-                         │                                                   │
-                         │   auth-db        event-db       client-db        │
-                         │   MySQL:3306     MySQL:3306     MongoDB:27017     │
-                         └──────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    Browser["Angular SPA\n:4200"]
+    Nginx["nginx reverse proxy :80\n/api/auth/ → auth-service\n/api/events → event-service\n/api/clients/ → client-service"]
+    Auth["auth-service\nREST :8080 · gRPC :9090"]
+    Event["event-service\nREST :8080"]
+    Client["client-service\nREST :8081"]
+    AuthDB[("auth-db\nMySQL")]
+    EventDB[("event-db\nMySQL")]
+    ClientDB[("client-db\nMongoDB")]
+
+    Browser -->|HTTP + JSON| Nginx
+    Nginx -->|/api/auth/| Auth
+    Nginx -->|/api/events| Event
+    Nginx -->|/api/clients/| Client
+    Event -->|gRPC Validate| Auth
+    Client -->|gRPC Validate| Auth
+    Client -->|REST chain call| Event
+    Auth --- AuthDB
+    Event --- EventDB
+    Client --- ClientDB
 ```
 
-### Communication Patterns
+### Services
 
-| Pattern | Used for | Protocol | Why |
-|---------|----------|----------|-----|
-| Client ↔ nginx | All external requests | HTTP/1.1 + JSON | Universal browser support |
-| nginx → backend | Reverse proxy | HTTP/1.1 | Single entry point, no CORS |
-| event-service → auth-service | Token validation per request | gRPC (HTTP/2 + Protobuf) | ~10x faster than REST, strict contract |
-| client-service → auth-service | Token validation per request | gRPC (HTTP/2 + Protobuf) | Same reasoning |
-| client-service → event-service | Ticket validation (chain pattern) | REST | Cross-domain resource access |
+| Service | Role | Stack | Port |
+|---------|------|-------|------|
+| auth-service | Identity management — JWT issuance, validation, blacklist | Spring Boot, MySQL, gRPC | REST :8080, gRPC :9090 |
+| event-service | Events, packages, tickets | Spring Boot, MySQL, Spring HATEOAS | REST :8080 |
+| client-service | Client profiles and ticket history | Spring Boot, MongoDB | REST :8081 |
+| frontend | Single Page Application | Angular 22, nginx | :80 (→ host :4200) |
+
+### nginx Proxy Rules
+
+| Location prefix | Proxied to | Notes |
+|-----------------|-----------|-------|
+| `/api/auth/` | `http://auth-service:8080/auth/` | Trailing slash preserved |
+| `/api/events` | `http://event-service:8080/events` | Prefix match, no trailing slash |
+| `/api/clients/` | `http://client-service:8081/clients/` | Trailing slash preserved |
+
+The `GET /events/tickets/{ticketId}` endpoint used by client-service for chain validation is **not** proxied by nginx — it is reachable only within the Docker network.
 
 ---
 
-## Services
+## Ticket Purchase Flow
 
-### auth-service
-- **Role**: Identity Management (IDM) — the single source of truth for authentication and authorization
-- **Stack**: Java 25, Spring Boot 4.x, Spring Data JPA, Spring Security Crypto
-- **Database**: MySQL (`users` table)
-- **Exposes**: REST API on `:8080`, gRPC server on `:9090`
-- **Responsibilities**:
-  - User lifecycle management (create, authenticate)
-  - JWT token issuance, validation, and revocation
-  - Token blacklist (in-memory; survives until service restart)
+```mermaid
+sequenceDiagram
+    participant A as Angular
+    participant ES as event-service
+    participant CS as client-service
+    participant AS as auth-service (gRPC)
 
-### event-service
-- **Role**: Events, packages, and tickets management
-- **Stack**: Java 25, Spring Boot 4.x, Spring Data JPA
-- **Database**: MySQL (`events`, `packages`, `tickets`, `package_events` tables)
-- **Exposes**: REST API on `:8080`
-- **Responsibilities**:
-  - CRUD for events and event packages
-  - Ticket sales and validation
-  - Enforces ownership rules (only the owner can modify their events/packages)
-  - Calls auth-service via gRPC to validate tokens on every request
+    A->>ES: POST /api/events/{id}/packages/{pkgId}/tickets
+    ES->>AS: gRPC Validate(token)
+    AS-->>ES: valid=true, userId, role=CLIENT
+    ES->>ES: check availableSeats > 0
+    ES-->>A: 201 { ticketResponseId: "uuid-..." }
 
-### client-service
-- **Role**: Client profiles and purchased ticket management
-- **Stack**: Java 25, Spring Boot 4.x, Spring Data MongoDB
-- **Database**: MongoDB (`clients` collection)
-- **Exposes**: REST API on `:8081`
-- **Responsibilities**:
-  - Client profile management (personal data, optional social links)
-  - Purchased ticket history (short/full format)
-  - Calls auth-service via gRPC for token validation
-  - Calls event-service REST API for ticket validation and event details
+    A->>CS: POST /api/clients/{email}/tickets { ticketId: "uuid-..." }
+    CS->>AS: gRPC Validate(token)
+    AS-->>CS: valid=true, userId, role=CLIENT
+    CS->>ES: GET /events/tickets/{ticketId}
+    ES-->>CS: 200 { ticketId, ownerUserId }
+    CS->>CS: verify ownerUserId == userId
+    CS->>CS: append ticketId to client.tickets[]
+    CS-->>A: 200 OK
+```
 
-### frontend
-- **Role**: Single Page Application
-- **Stack**: Angular, SCSS, nginx
-- **Exposes**: HTTP on `:80` (mapped to host `:4200`)
-- **Responsibilities**:
-  - User interface for all three roles (admin, owner-event, client)
-  - Communicates exclusively through nginx reverse proxy (no direct backend calls)
+The chain call from client-service to event-service ensures the ticket UUID exists on the event-service before it is stored in MongoDB, preventing stale or fabricated UUIDs from entering the client profile.
+
+---
+
+## Entity-Relationship Model
+
+```mermaid
+erDiagram
+    USERS {
+        bigint id PK
+        varchar email
+        varchar password
+        enum role
+    }
+    EVENTS {
+        bigint event_id PK
+        varchar name
+        varchar description
+        varchar location
+        varchar owner_user_id
+    }
+    EVENT_PACKAGES {
+        bigint event_package_id PK
+        varchar name
+        varchar description
+        varchar location
+        int seat_count
+        bigint event_id FK
+    }
+    TICKETS {
+        varchar ticket_id PK
+        varchar owner_user_id
+        bigint package_id FK
+    }
+
+    EVENTS ||--o{ EVENT_PACKAGES : "contains"
+    EVENT_PACKAGES ||--o{ TICKETS : "sold as"
+```
+
+`owner_user_id` in `EVENTS` and `TICKETS` stores the JWT `sub` claim as a plain string — there is no foreign key to `USERS`. The services run on separate databases and do not share a schema.
 
 ---
 
@@ -110,19 +158,17 @@ Angular (:4200) ──HTTP──►│   │  /api/auth/   → auth-service:8080
 
 | Role | Capabilities |
 |------|-------------|
-| `ADMIN` | Create users with role `OWNER_EVENT` or `CLIENT`; no access to event/client data |
-| `OWNER_EVENT` | Full CRUD on own events and packages; view public info of clients who bought tickets to own events; view other owners' events (read-only) |
-| `CLIENT` | Manage own profile; view purchased tickets; view all active events/packages; purchase tickets |
+| `ADMIN` | Create user accounts with any role |
+| `OWNER_EVENT` | Full CRUD on own events and packages; read-only on all events |
+| `CLIENT` | Purchase tickets; view events and packages; manage own profile |
 
 ### Authorization Flow
-
-Every protected endpoint in event-service and client-service follows this flow:
 
 ```
 HTTP Request + Authorization: Bearer <token>
          │
          ▼
-Extract token from header
+Extract token from Authorization header
          │
          ▼
 gRPC Validate(token) → auth-service
@@ -131,24 +177,18 @@ gRPC Validate(token) → auth-service
          │
          └── valid=true → { userId, role }
                   │
-                  ├── role doesn't permit action → 403 Forbidden
+                  ├── role insufficient → 403 Forbidden
                   │
                   └── authorized → process request
 ```
 
-### Token Transport
-
-Tokens are passed via the standard HTTP `Authorization` header:
-```
-Authorization: Bearer eyJhbGciOiJIUzI1NiJ9...
-```
+Read endpoints for events and packages (`GET /events`, `GET /events/{id}`, `GET /events/{id}/packages`, `GET /events/{id}/packages/{packageId}`) are **public** — no token required.
 
 ---
 
 ## JWT Token Structure
 
-Tokens follow the **JWS (JSON Web Signature)** standard — RFC 7515/7519.  
-Format: `base64url(header).base64url(payload).signature`
+Tokens follow the **JWS** standard (RFC 7515/7519): `base64url(header).base64url(payload).signature`
 
 ### Header
 ```json
@@ -159,28 +199,28 @@ Format: `base64url(header).base64url(payload).signature`
 
 | Claim | Type | Description |
 |-------|------|-------------|
-| `sub` | standard | User ID (subject) |
-| `iss` | standard | Issuer URL of the auth-service |
-| `exp` | standard | Expiration timestamp (default: 24h) |
-| `iat` | standard | Issued-at timestamp |
-| `jti` | standard | Unique token identifier (UUID) |
-| `role` | custom | User role: `ADMIN`, `OWNER_EVENT`, or `CLIENT` |
+| `sub` | string | User ID — numeric ID stored as string |
+| `role` | string | `ADMIN`, `OWNER_EVENT`, or `CLIENT` |
+| `iat` | number | Issued-at timestamp |
+| `exp` | number | Expiration timestamp (default: 24 h) |
 
 ### Signature
+
 ```
 HMAC-SHA256(base64url(header) + "." + base64url(payload), secretKey)
 ```
 
-The secret key is a 256-bit hex string configured via environment variable `JWT_SECRET`.
+The secret key is configured via `JWT_SECRET` as a 64-character hex string (256-bit).
 
 ### Token Blacklist
-On logout, the token is added to an in-memory `ConcurrentHashMap` set in auth-service. Every `Validate` gRPC call checks the blacklist before verifying the JWT signature. Tokens remain blacklisted until service restart.
+
+On logout, the raw token string is added to an in-memory `ConcurrentHashSet` in auth-service. Every `Validate` gRPC call checks the blacklist before verifying the signature. Blacklisted tokens remain invalid until auth-service restarts.
 
 ---
 
 ## gRPC Contract
 
-Defined in `auth.proto` — shared across all three services.
+Defined in `auth.proto` — identical copy in all services under `src/main/proto/`.
 
 ```protobuf
 syntax = "proto3";
@@ -189,13 +229,9 @@ package auth;
 option java_package = "com.example.auth.grpc";
 
 service AuthService {
-  rpc Login    (LoginRequest)    returns (LoginResponse);
   rpc Validate (ValidateRequest) returns (ValidateResponse);
   rpc Logout   (LogoutRequest)   returns (LogoutResponse);
 }
-
-message LoginRequest  { string username = 1; string password = 2; }
-message LoginResponse { string token    = 1; }
 
 message ValidateRequest  { string token   = 1; }
 message ValidateResponse { bool valid     = 1; string user_id = 2; string role = 3; }
@@ -204,210 +240,269 @@ message LogoutRequest  { string token   = 1; }
 message LogoutResponse { bool   success = 1; }
 ```
 
-All RPCs use the **Unary RPC** pattern — one request, one response.
+All RPCs use the **Unary RPC** pattern. event-service and client-service connect to auth-service via `ManagedChannelBuilder.forAddress(AUTH_GRPC_HOST, AUTH_GRPC_PORT).usePlaintext()`.
 
 ---
 
 ## REST API — Auth Service
 
-Base path: `/auth`  
-Port: `8080` (internal), `8090` (host, for debugging)
+Base path: `/auth` · External: `/api/auth/` · Port: `8080` (internal), `8090` (host debug)
 
-### Endpoints
-
-| Method | Path | Auth | Status codes | Description |
-|--------|------|------|-------------|-------------|
-| `POST` | `/auth/login` | Public | 200, 401 | Authenticate user, receive JWT |
+| Method | Path | Auth | Status | Description |
+|--------|------|------|--------|-------------|
+| `POST` | `/auth/login` | Public | 200, 401 | Authenticate, receive JWT |
 | `POST` | `/auth/logout` | Bearer | 200 | Invalidate token (add to blacklist) |
-| `POST` | `/auth/users` | ADMIN Bearer | 201, 403, 409 | Create new user |
+| `POST` | `/auth/users` | ADMIN | 201, 403, 409 | Create new user account |
 
 ### POST `/auth/login`
 
-Request body:
 ```json
-{ "email": "admin@platform.com", "password": "admin123" }
-```
+// Request
+{ "email": "owner@platform.com", "password": "secret123" }
 
-Response `200`:
-```json
-{ "token": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.xxx" }
-```
+// 200
+{ "token": "eyJhbGciOiJIUzI1NiJ9..." }
 
-Response `401`:
-```json
+// 401
 { "error": "Credentiale invalide" }
 ```
 
 ### POST `/auth/logout`
 
-Headers:
 ```
 Authorization: Bearer <token>
 ```
 
-Response `200`:
 ```json
+// 200
 { "success": true }
 ```
 
 ### POST `/auth/users`
 
-Headers:
-```
-Authorization: Bearer <admin_token>
-```
-
-Request body:
 ```json
-{ "email": "owner@platform.com", "password": "secret123", "role": "OWNER_EVENT" }
-```
+// Request (ADMIN token required)
+{ "email": "client@platform.com", "password": "pass123", "role": "CLIENT" }
 
-Response `201`:
-```json
+// 201
 { "message": "User creat cu succes" }
-```
 
-Response `403`:
-```json
-{ "error": "Acces interzis" }
-```
-
-Response `409`:
-```json
+// 409
 { "error": "Email deja existent" }
 ```
+
+Valid roles: `ADMIN`, `OWNER_EVENT`, `CLIENT`
 
 ---
 
 ## REST API — Event Service
 
-Base path: `/api/event-manager`  
-Port: `8080`  
-All endpoints require `Authorization: Bearer <token>` unless noted.
+Base path: `/events` · External: `/api/events` · Port: `8080`
+
+All responses include HATEOAS `_links`. `GET` endpoints are public. Write endpoints require `Authorization: Bearer <token>`.
 
 ### Events
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/events` | Any | List events (paginated, filterable) |
-| `GET` | `/events/{id}` | Any | Get event by ID |
-| `POST` | `/events` | OWNER_EVENT | Create event (ID_OWNER set from token) |
-| `PUT` | `/events/{id}` | OWNER_EVENT (own) | Replace event |
-| `PATCH` | `/events/{id}` | OWNER_EVENT (own) | Partial update |
-| `DELETE` | `/events/{id}` | OWNER_EVENT (own) | Delete event |
+| Method | Path | Auth | Status | Description |
+|--------|------|------|--------|-------------|
+| `GET` | `/events` | Public | 200 | List events (paginated, filterable) |
+| `GET` | `/events/{id}` | Public | 200, 404 | Get event by ID |
+| `POST` | `/events` | OWNER_EVENT or ADMIN | 201, 401, 403 | Create event |
+| `PUT` | `/events/{id}` | OWNER_EVENT (own) or ADMIN | 200, 401, 403, 404 | Replace event |
+| `DELETE` | `/events/{id}` | OWNER_EVENT (own) or ADMIN | 204, 401, 403, 404 | Delete event and all its packages and tickets |
 
-#### Query parameters for `GET /events`
-| Parameter | Description |
-|-----------|-------------|
-| `name` | Partial name match |
-| `location` | Partial location match |
-| `available_tickets` | Minimum available tickets |
-| `page` | Page index |
-| `items_per_page` | Items per page (default: 10) |
+#### Query parameters — `GET /events`
 
-### Event Packages
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `name` | string | — | Partial, case-insensitive name filter |
+| `page` | int | `0` | Page index (0-based) |
+| `size` | int | `10` | Items per page |
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/event-packets` | Any | List packages (paginated, filterable) |
-| `GET` | `/event-packets/{id}` | Any | Get package by ID |
-| `POST` | `/event-packets` | OWNER_EVENT | Create package |
-| `PUT` | `/event-packets/{id}` | OWNER_EVENT (own) | Replace package |
-| `PATCH` | `/event-packets/{id}` | OWNER_EVENT (own) | Partial update |
-| `DELETE` | `/event-packets/{id}` | OWNER_EVENT (own) | Delete package |
+Results are sorted alphabetically by name.
 
-### Navigation routes
+#### Event body (`POST`, `PUT`)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/events/{id}/event-packets` | Packages containing this event |
-| `GET` | `/event-packets/{id}/events` | Events in this package |
-| `POST` | `/event-packets/{id}/events/{eid}` | Add event to package |
-| `DELETE` | `/event-packets/{id}/events/{eid}` | Remove event from package |
+```json
+{ "name": "Concert Iași", "location": "Sala Palatului", "description": "Un concert extraordinar" }
+```
 
-### Tickets
+`name` is required. `location` and `description` are optional.
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/tickets/{code}` | Any | Get ticket by code |
-| `POST` | `/events/{id}/tickets` | CLIENT | Purchase ticket for event |
-| `POST` | `/event-packets/{id}/tickets` | CLIENT | Purchase ticket for package |
-| `GET` | `/events/{id}/tickets` | OWNER_EVENT (own) | All tickets for event |
-| `DELETE` | `/tickets/{code}` | OWNER_EVENT (own) | Invalidate ticket |
+#### Event response
 
-### Business rules enforced
-- Available tickets for a package ≤ minimum available tickets across constituent events
-- Ticket purchase not allowed if `seatCount` is null
-- Ticket count cannot be edited once at least one ticket has been sold
-- Tickets cannot exceed the configured maximum
-
-### HATEOAS links
-
-All resource representations include `_links`:
 ```json
 {
-  "id": 1,
+  "eventResponseId": 1,
   "name": "Concert Iași",
+  "location": "Sala Palatului",
+  "description": "Un concert extraordinar",
   "_links": {
-    "self":   { "href": "/api/event-manager/events/1" },
-    "parent": { "href": "/api/event-manager/events" },
-    "tickets": { "href": "/api/event-manager/events/1/tickets", "type": "GET" },
-    "packages": { "href": "/api/event-manager/events/1/event-packets", "type": "GET" }
+    "self":     { "href": "/events/1" },
+    "packages": { "href": "/events/1/packages" }
   }
 }
 ```
+
+`ownerUserId` is stored server-side and never exposed in responses.
+
+---
+
+### Packages
+
+| Method | Path | Auth | Status | Description |
+|--------|------|------|--------|-------------|
+| `GET` | `/events/{eventId}/packages` | Public | 200, 404 | List packages for an event |
+| `GET` | `/events/{eventId}/packages/{packageId}` | Public | 200, 404 | Get package by ID |
+| `POST` | `/events/{eventId}/packages` | OWNER_EVENT (own event) or ADMIN | 201, 401, 403, 404 | Create package |
+| `PUT` | `/events/{eventId}/packages/{packageId}` | OWNER_EVENT (own event) or ADMIN | 200, 401, 403, 404 | Replace package |
+| `DELETE` | `/events/{eventId}/packages/{packageId}` | OWNER_EVENT (own event) or ADMIN | 204, 401, 403, 404 | Delete package and all its tickets |
+
+#### Package body (`POST`, `PUT`)
+
+```json
+{ "name": "VIP", "location": "Zona A", "description": "Acces VIP", "seatCount": 50 }
+```
+
+`name` and `seatCount` are required (`seatCount` ≥ 1). `location` and `description` are optional.
+
+#### Package response
+
+```json
+{
+  "packageResponseId": 3,
+  "name": "VIP",
+  "location": "Zona A",
+  "description": "Acces VIP",
+  "seatCount": 50,
+  "availableSeats": 47,
+  "_links": {
+    "self":    { "href": "/events/1/packages/3" },
+    "event":   { "href": "/events/1" },
+    "tickets": { "href": "/events/1/packages/3/tickets" }
+  }
+}
+```
+
+`availableSeats` is computed dynamically as `seatCount − COUNT(tickets)`.
+
+---
+
+### Tickets
+
+| Method | Path | Auth | Status | Description |
+|--------|------|------|--------|-------------|
+| `GET` | `/events/{eventId}/packages/{packageId}/tickets` | OWNER_EVENT (own) or ADMIN | 200, 401, 403, 404 | List all tickets for a package |
+| `POST` | `/events/{eventId}/packages/{packageId}/tickets` | CLIENT | 201, 401, 403, 404, 409 | Purchase a ticket |
+| `GET` | `/events/{eventId}/packages/{packageId}/tickets/{ticketId}` | CLIENT (own), OWNER_EVENT (own), or ADMIN | 200, 401, 403, 404 | Get ticket by ID |
+| `GET` | `/events/tickets/{ticketId}` | Internal (service-to-service) | 200, 404 | Verify ticket existence — used by client-service chain call only; not proxied by nginx |
+
+#### Ticket response
+
+```json
+{
+  "ticketResponseId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "ownerUserId": "42",
+  "_links": {
+    "self":    { "href": "/events/1/packages/3/tickets/f47ac10b-58cc-4372-a567-0e02b2c3d479" },
+    "package": { "href": "/events/1/packages/3" }
+  }
+}
+```
+
+`409 Conflict` is returned when all seats are sold. A CLIENT can view only their own ticket; an OWNER_EVENT can view any ticket for packages on their own event.
+
+---
+
+### Error responses
+
+```json
+{ "error": "<mesaj>" }
+```
+
+| Status | Condition |
+|--------|-----------|
+| `401` | Missing, invalid, expired, or blacklisted token |
+| `403` | Valid token but insufficient role or not the owner |
+| `404` | Resource not found |
+| `409` | Conflict — no seats available |
 
 ---
 
 ## REST API — Client Service
 
-Base path: `/api/client-manager`  
-Port: `8081`  
-All endpoints require `Authorization: Bearer <token>` unless noted.
+Base path: `/clients` · External: `/api/clients/` · Port: `8081`
+
+All endpoints require `Authorization: Bearer <token>`.
 
 ### Client Profile
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/clients/{email}` | CLIENT (own) or OWNER_EVENT | Get client profile |
-| `POST` | `/clients` | CLIENT | Create profile |
-| `PATCH` | `/clients/{email}` | CLIENT (own) | Update profile fields |
-| `DELETE` | `/clients/{email}` | CLIENT (own) | Delete profile |
+| Method | Path | Auth | Status | Description |
+|--------|------|------|--------|-------------|
+| `POST` | `/clients/` | CLIENT | 201, 401, 409 | Create profile — email from request body must match the authenticated user |
+| `GET` | `/clients/{email}` | CLIENT (own) or OWNER_EVENT | 200, 401, 403, 404 | Get profile — CLIENT sees all fields; OWNER_EVENT sees only public fields |
+| `PATCH` | `/clients/{email}` | CLIENT (own) | 200, 401, 403, 404 | Partial update — only provided fields are changed |
+| `DELETE` | `/clients/{email}` | CLIENT (own) | 204, 401, 403, 404 | Delete profile |
 
-### Tickets
+#### GET `/clients/{email}` — response (CLIENT)
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/clients/{email}/tickets` | CLIENT (own) | List tickets (short format) |
-| `GET` | `/clients/{email}/tickets/{code}` | CLIENT (own) | Get ticket details (full format) |
-
-#### Ticket formats
-
-**Short format** — just the ticket code:
-```json
-{ "code": "TKT-2025-ABC123" }
-```
-
-**Full format** — enriched via call to event-service:
 ```json
 {
-  "code": "TKT-2025-ABC123",
-  "event": "Concert Iași",
-  "location": "Sala Palatului",
-  "package_events": ["Concert 1", "Spectacol 2"]
+  "email": "client@example.com",
+  "firstName": "Ion",
+  "lastName": "Popescu",
+  "publicInfo": true,
+  "socialMedia": {
+    "linkedin": "https://linkedin.com/in/ion",
+    "publicSocialMedia": false
+  },
+  "tickets": ["f47ac10b-58cc-4372-a567-0e02b2c3d479"]
 }
 ```
 
-### Chain call pattern (client-service → event-service)
+`OWNER_EVENT` receives only the fields where `publicInfo = true`, and `socialMedia` only when `publicSocialMedia = true`.
 
-When a client requests full ticket details, client-service calls event-service:
+### Tickets
+
+| Method | Path | Auth | Status | Description |
+|--------|------|------|--------|-------------|
+| `GET` | `/clients/{email}/tickets` | CLIENT (own) | 200, 401, 403, 404 | List registered ticket UUIDs |
+| `POST` | `/clients/{email}/tickets` | CLIENT (own) | 200, 401, 403, 404 | Register a ticket UUID — triggers chain call to event-service |
+
+#### POST `/clients/{email}/tickets`
+
+```json
+// Request
+{ "ticketId": "f47ac10b-58cc-4372-a567-0e02b2c3d479" }
+
+// 200 — returns updated ticket list
+["f47ac10b-58cc-4372-a567-0e02b2c3d479", "..."]
+
+// 403 — ticket not found or does not belong to the caller
+{ "error": "Biletul nu a fost gasit sau nu va apartine" }
 ```
-CLIENT request → client-service → event-service /validate-ticket/{code}
-                                               ↓
-                                    returns event/package details
-                                               ↓
-                      client-service assembles full response → CLIENT
-```
+
+The chain call to `GET /events/tickets/{ticketId}` is made synchronously before persisting the UUID. If the event-service returns 404, the client-service returns 404 to the caller. If `ownerUserId` in the event-service response does not match the authenticated user's ID, the client-service returns 403.
+
+---
+
+## Key Design Decisions
+
+**No cross-database foreign keys**: `owner_user_id` in `events` and `tickets` stores the JWT `sub` as a plain string. The auth-service, event-service, and client-service each have their own isolated database. Referential integrity between services is enforced by application logic (ownership checks), not by database constraints.
+
+**JWT claims over session state**: Every protected request carries all necessary identity information (`userId`, `role`) inside the JWT. Services do not maintain sessions — the token is the only source of truth per request. This makes all backend services stateless and independently scalable.
+
+**gRPC for token validation**: event-service and client-service validate tokens via gRPC instead of REST to reduce per-request overhead (HTTP/2 multiplexing, binary Protobuf encoding, persistent connection).
+
+**Chain call for ticket registration**: After purchasing a ticket from event-service, the Angular client calls client-service to register the UUID. client-service performs a chain call to `GET /events/tickets/{ticketId}` to confirm the ticket exists and belongs to the caller before persisting it to MongoDB. This prevents stale or fabricated ticket UUIDs in client profiles.
+
+**HATEOAS on event-service responses**: All event, package, and ticket responses include `_links`. This allows the frontend to discover related resources (e.g., navigate from an event to its packages list) without hard-coding URL structures.
+
+**In-memory token blacklist**: The blacklist is a `ConcurrentHashSet` in auth-service heap. It provides immediate logout invalidation without a database round-trip, at the cost of being cleared on service restart. A persistent blacklist (e.g., Redis with TTL) would survive restarts but adds infrastructure complexity; the current tradeoff is acceptable for a single-node deployment.
+
+**`availableSeats` computed at query time**: Available seat count is never stored — it is calculated as `seatCount − COUNT(tickets)` per request. This avoids double-update consistency issues (updating both a counter and inserting a row) at the cost of a count query per package read.
+
+**Cascade delete via JPA**: Deleting an event cascades to its packages; deleting a package cascades to its tickets. The cascade is configured at the JPA level (`CascadeType.ALL`, `orphanRemoval = true`), not at the database constraint level.
 
 ---
 
@@ -417,51 +512,47 @@ CLIENT request → client-service → event-service /validate-ticket/{code}
 
 **`users`**
 
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `id` | INT | PK, AUTO_INCREMENT | |
-| `email` | VARCHAR | UNIQUE, NOT NULL | Used as username |
-| `password` | VARCHAR | NOT NULL | BCrypt hashed |
-| `role` | ENUM | NOT NULL | `ADMIN`, `OWNER_EVENT`, `CLIENT` |
+| Column | Type | Constraints |
+|--------|------|-------------|
+| `id` | BIGINT | PK, AUTO_INCREMENT |
+| `email` | VARCHAR | UNIQUE, NOT NULL |
+| `password` | VARCHAR | NOT NULL — BCrypt hashed |
+| `role` | ENUM(`ADMIN`,`OWNER_EVENT`,`CLIENT`) | NOT NULL |
+
+---
 
 ### Event Service — MySQL
 
 **`events`**
 
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `id` | INT | PK, AUTO_INCREMENT | |
-| `owner_id` | INT | NOT NULL | FK → users.id |
-| `name` | VARCHAR | UNIQUE, NOT NULL | |
-| `location` | VARCHAR | NULLABLE | |
-| `description` | VARCHAR | NULLABLE | |
-| `seat_count` | INT | NULLABLE | Must be set before ticket sales |
+| Column | Type | Constraints |
+|--------|------|-------------|
+| `event_id` | BIGINT | PK, AUTO_INCREMENT |
+| `name` | VARCHAR | NOT NULL |
+| `description` | VARCHAR | NULLABLE |
+| `location` | VARCHAR | NULLABLE |
+| `owner_user_id` | VARCHAR | NOT NULL — no FK to users |
 
-**`packages`**
-
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `id` | INT | PK, AUTO_INCREMENT | |
-| `owner_id` | INT | NOT NULL | FK → users.id |
-| `name` | VARCHAR | UNIQUE, NOT NULL | |
-| `location` | VARCHAR | NULLABLE | |
-| `description` | VARCHAR | NULLABLE | |
-| `seat_count` | INT | NULLABLE | ≤ min(seat_count) of constituent events |
-
-**`tickets`**
-
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| `code` | VARCHAR | PK | Generated by application logic |
-| `package_id` | INT | FK, NULLABLE | References `packages.id` |
-| `event_id` | INT | FK, NULLABLE | References `events.id` |
-
-**`package_events`** (package ↔ event many-to-many)
+**`event_packages`**
 
 | Column | Type | Constraints |
 |--------|------|-------------|
-| `package_id` | INT | PK, FK → packages.id |
-| `event_id` | INT | PK, FK → events.id |
+| `event_package_id` | BIGINT | PK, AUTO_INCREMENT |
+| `name` | VARCHAR | NOT NULL |
+| `description` | VARCHAR | NULLABLE |
+| `location` | VARCHAR | NULLABLE |
+| `seat_count` | INT | NOT NULL, ≥ 1 |
+| `event_id` | BIGINT | FK → events.event_id, NOT NULL |
+
+**`tickets`**
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| `ticket_id` | VARCHAR | PK — UUID generated at purchase |
+| `owner_user_id` | VARCHAR | NOT NULL — no FK to users |
+| `package_id` | BIGINT | FK → event_packages.event_package_id, NOT NULL |
+
+---
 
 ### Client Service — MongoDB
 
@@ -469,94 +560,163 @@ CLIENT request → client-service → event-service /validate-ticket/{code}
 
 ```json
 {
-  "_id": "ObjectID",
+  "_id": "ObjectId",
   "email": "client@example.com",
-  "first_name": "Ion",
-  "last_name": "Popescu",
-  "public_info": true,
-  "social_media": {
+  "userId": "42",
+  "firstName": "Ion",
+  "lastName": "Popescu",
+  "publicInfo": true,
+  "socialMedia": {
     "linkedin": "https://linkedin.com/in/...",
-    "public": false
+    "publicSocialMedia": false
   },
   "tickets": [
-    "TKT-2025-ABC123",
-    "TKT-2025-DEF456"
+    "f47ac10b-58cc-4372-a567-0e02b2c3d479"
   ]
 }
 ```
 
-Fields `first_name`, `last_name`, `social_media` are optional and may be absent from the document.  
-`public_info` flag controls visibility to users with `OWNER_EVENT` role.
+`email` carries a unique index (`@Indexed(unique=true)`). `userId` is the JWT `sub` claim stored at profile creation — it ties the MongoDB document to the auth-service user without a cross-database foreign key. `tickets` stores UUID strings matching `ticket_id` from the event-service. `publicInfo` controls profile visibility to `OWNER_EVENT` users. `firstName`, `lastName`, and `socialMedia` are optional.
+
+---
+
+## Project Structure
+
+```
+event-platform/
+├── auth-service/
+│   ├── src/main/java/com/example/event_service/
+│   │   ├── controller/       AuthController.java
+│   │   ├── grpc/             AuthGrpcService.java
+│   │   ├── model/            User.java
+│   │   ├── repository/       UserRepository.java
+│   │   ├── service/          AuthService.java · JwtService.java · TokenBlacklistService.java
+│   │   └── config/           DataSeeder.java · SecurityConfig.java
+│   └── src/main/proto/       auth.proto
+│
+├── event-service/
+│   ├── src/main/java/com/example/event_service/
+│   │   ├── controller/       EventController.java · PackageController.java
+│   │   │                     TicketController.java · TicketLookupController.java
+│   │   ├── dto/              CreateEventRequest.java · EventResponse.java
+│   │   │                     CreatePackageRequest.java · PackageResponse.java · TicketResponse.java
+│   │   ├── exception/        GlobalExceptionHandler.java · NotFoundException.java
+│   │   │                     ForbiddenException.java · UnauthorizedException.java
+│   │   ├── grpc/             TokenValidationService.java
+│   │   ├── model/            Event.java · EventPackage.java · Ticket.java
+│   │   ├── repository/       EventRepository.java · EventPackageRepository.java · TicketRepository.java
+│   │   └── service/          EventService.java · PackageService.java · TicketService.java
+│   └── src/main/proto/       auth.proto
+│
+├── client-service/
+│   ├── src/main/java/com/example/client_service/
+│   │   ├── controller/       ClientController.java
+│   │   ├── dto/              CreateClientRequest.java · UpdateClientRequest.java
+│   │   │                     AddTicketRequest.java · ClientResponse.java
+│   │   ├── exception/        GlobalExceptionHandler.java · NotFoundException.java
+│   │   │                     ForbiddenException.java · UnauthorizedException.java
+│   │   ├── grpc/             AuthGrpcClient.java
+│   │   ├── model/            Client.java
+│   │   ├── repository/       ClientRepository.java
+│   │   └── service/          TokenValidationService.java · ClientService.java
+│   │                         ClientTicketService.java · EventVerificationService.java
+│   └── src/main/proto/       auth.proto
+│
+├── frontend/
+│   └── src/app/
+│       ├── core/
+│       │   ├── guards/       auth.guard.ts · role.guard.ts
+│       │   ├── interceptors/ auth.interceptor.ts
+│       │   ├── models/       user.model.ts · event.model.ts · client.model.ts
+│       │   └── services/     auth.service.ts · event.service.ts · client.service.ts
+│       └── features/
+│           ├── auth/         login/
+│           ├── events/       event-list/ · event-detail/ · create-event/ · edit-event/
+│           ├── admin/        create-user/
+│           └── profile/      profile.component (ts · html · scss)
+│
+├── nginx/
+│   └── nginx.conf
+├── docker-compose.yml
+└── .env.example
+```
 
 ---
 
 ## Environment Variables
 
 Copy `.env.example` to `.env`:
+
 ```bash
 cp .env.example .env
 ```
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AUTH_DB_NAME` | `auth_db` | Auth service MySQL database name |
+| `AUTH_DB_NAME` | `auth_db` | Auth service MySQL database |
 | `AUTH_DB_USER` | `auth_user` | Auth service DB username |
 | `AUTH_DB_PASSWORD` | — | Auth service DB password |
 | `AUTH_DB_ROOT_PASSWORD` | — | MySQL root password |
-| `AUTH_DB_PORT` | `3306` | Host port mapped to auth-db container |
-| `EVENT_DB_NAME` | `event_db` | Event service MySQL database name |
+| `AUTH_DB_PORT` | `3306` | Host port for auth-db |
+| `EVENT_DB_NAME` | `event_db` | Event service MySQL database |
 | `EVENT_DB_USER` | `event_user` | Event service DB username |
 | `EVENT_DB_PASSWORD` | — | Event service DB password |
 | `EVENT_DB_ROOT_PASSWORD` | — | MySQL root password |
-| `EVENT_DB_PORT` | `3307` | Host port mapped to event-db container |
-| `CLIENT_DB_NAME` | `client_db` | Client service MongoDB database name |
+| `EVENT_DB_PORT` | `3307` | Host port for event-db |
+| `CLIENT_DB_NAME` | `client_db` | Client service MongoDB database |
 | `CLIENT_DB_USER` | `client_user` | MongoDB username |
 | `CLIENT_DB_PASSWORD` | — | MongoDB password |
-| `CLIENT_DB_PORT` | `27017` | Host port mapped to client-db container |
-| `JWT_SECRET` | — | 256-bit hex string (64 hex chars) for HS256 signing |
-| `JWT_EXPIRATION_MS` | `86400000` | Token validity in milliseconds (default: 24h) |
+| `CLIENT_DB_PORT` | `27017` | Host port for client-db |
+| `JWT_SECRET` | — | 64-character hex string (256-bit HS256 key) |
+| `JWT_EXPIRATION_MS` | `86400000` | Token validity in ms (default 24 h) |
 
 ---
 
 ## Running with Docker
 
-### Prerequisites
-- Docker Desktop running
-
 ### Start all services
+
 ```bash
 docker compose up --build
 ```
 
-### Start only databases (for local backend development)
-```bash
-docker compose up auth-db event-db client-db -d
-```
-
 ### Rebuild a single service after code changes
+
 ```bash
-docker compose up --build auth-service
+docker compose build <service-name>
+docker compose up -d <service-name>
 ```
 
-### Stop and remove containers
+Example after changing event-service and frontend:
+
 ```bash
-docker compose down
+docker compose build event-service frontend
+docker compose up -d event-service frontend
 ```
 
-### Stop and remove containers + volumes (wipe all data)
+### Full cache clear (when stale layers cause issues)
+
 ```bash
-docker compose down -v
+docker system prune -a --volumes -f
+docker compose up --build
+```
+
+### Stop containers
+
+```bash
+docker compose down          # keep volumes
+docker compose down -v       # wipe all data volumes
 ```
 
 ### Service URLs
 
-| Service | External URL | Notes |
-|---------|-------------|-------|
+| Service | URL | Notes |
+|---------|-----|-------|
 | Frontend | `http://localhost:4200` | Served by nginx |
-| Auth REST | `http://localhost:8090` | Direct access for debugging |
-| Event REST | `http://localhost:8080` | |
-| Client REST | `http://localhost:8081` | |
-| Auth gRPC | `localhost:9090` | Internal only (between containers) |
+| Auth REST | `http://localhost:8090` | Direct — debug only |
+| Event REST | `http://localhost:8080` | Direct — debug only |
+| Client REST | `http://localhost:8081` | Direct — debug only |
+| Auth gRPC | `localhost:9090` | Container-internal only |
 | Auth DB | `localhost:3306` | MySQL |
 | Event DB | `localhost:3307` | MySQL |
 | Client DB | `localhost:27017` | MongoDB |
@@ -565,87 +725,32 @@ docker compose down -v
 
 ## Local Development
 
-### Prerequisites
+| Tool | Version |
+|------|---------|
+| Java | 25 |
+| Maven | 3.9+ |
+| Node.js | 20+ LTS |
+| Angular CLI | latest |
+| Docker Desktop | latest |
 
-| Tool | Version | Notes |
-|------|---------|-------|
-| Java | 25 | JDK required |
-| Maven | 3.9+ | Or use `./mvnw` wrapper |
-| Node.js | 20+ LTS | For Angular frontend |
-| Angular CLI | latest | `npm install -g @angular/cli` |
-| Docker Desktop | latest | Required for databases |
-
-### 1. Start databases
 ```bash
+# 1. Start databases
 docker compose up auth-db event-db client-db -d
+
+# 2. Run auth-service  (REST :8080, gRPC :9090)
+cd auth-service && mvn spring-boot:run
+
+# 3. Run event-service  (REST :8080)
+cd event-service && mvn spring-boot:run
+
+# 4. Run client-service  (REST :8081)
+cd client-service && mvn spring-boot:run
+
+# 5. Run frontend  (http://localhost:4200)
+cd frontend && npm install && ng serve
 ```
 
-### 2. Run auth-service
-```bash
-cd auth-service
-mvn spring-boot:run
-# REST available at http://localhost:8080
-# gRPC available at localhost:9090
-```
-
-### 3. Run event-service
-```bash
-cd event-service
-mvn spring-boot:run
-# REST available at http://localhost:8080
-```
-
-### 4. Run client-service
-```bash
-cd client-service
-mvn spring-boot:run
-# REST available at http://localhost:8081
-```
-
-### 5. Run frontend
-```bash
-cd frontend
-npm install
-ng serve
-# Available at http://localhost:4200
-```
-
-> When running locally, Angular's development proxy (`proxy.conf.json`) should forward `/api/*` calls to the appropriate service ports.
-
-## Design Principles
-
-### MVC Pattern
-Each REST service follows the MVC pattern:
-- **Model**: JPA entities / MongoDB documents, repositories
-- **Controller**: REST routes, HTTP method mapping, request/response handling
-- **View (DTO)**: Data Transfer Objects for serialization/deserialization — DTOs contain no business logic
-
-### HATEOAS
-Resource representations include navigational links per RFC 8288 and Roy Fielding's REST constraints:
-- `self` — URI of the current resource
-- `parent` — URI of the container resource
-- Action links (state-dependent) — only available actions are included based on current resource state
-
-### HTTP Status Codes
-
-| Code | Used when |
-|------|-----------|
-| `200 OK` | Successful GET, DELETE with body, successful login/logout |
-| `201 Created` | POST that creates a new resource |
-| `204 No Content` | Successful DELETE with no body |
-| `401 Unauthorized` | Missing, invalid, or expired JWT token |
-| `403 Forbidden` | Valid token but insufficient role/ownership |
-| `404 Not Found` | Resource does not exist |
-| `409 Conflict` | Unique constraint violation (duplicate email, duplicate event name) |
-| `415 Unsupported Media Type` | Wrong content type |
-| `422 Unprocessable Content` | Payload format correct but values invalid |
-
-### Layered Architecture (per service)
-```
-Controller  →  Service  →  Repository
-(HTTP/gRPC)    (logic)      (DB)
-```
-Controllers are thin adapters. Business logic lives exclusively in the Service layer.
+In development, configure Angular's `proxy.conf.json` to forward `/api/*` to the appropriate backend ports.
 
 ---
 
@@ -659,6 +764,4 @@ Created automatically on first startup by `DataSeeder`:
 | Password | `admin123` |
 | Role | `ADMIN` |
 
-> **Important**: Change the default admin credentials before any production or shared deployment.
-
-
+> Change the default credentials before any production or shared deployment.

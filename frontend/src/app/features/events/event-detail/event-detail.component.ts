@@ -1,15 +1,24 @@
 import { Component, OnInit, signal } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { CommonModule } from '@angular/common';
-import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormsModule } from '@angular/forms';
+import { forkJoin } from 'rxjs';
 import { EventService } from '../../../core/services/event.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { ClientService } from '../../../core/services/client.service';
 import { EventModel, EventPackage, Ticket } from '../../../core/models/event.model';
+
+interface PackageDraft {
+  name: string;
+  location: string;
+  description: string;
+  seatCount: number | null;
+}
 
 @Component({
   selector: 'app-event-detail',
   standalone: true,
-  imports: [CommonModule, RouterLink, ReactiveFormsModule],
+  imports: [CommonModule, RouterLink, FormsModule],
   templateUrl: './event-detail.component.html',
   styleUrl: './event-detail.component.scss'
 })
@@ -22,9 +31,9 @@ export class EventDetailComponent implements OnInit {
   purchaseMessage = signal<string | null>(null);
 
   showPackageForm = signal(false);
-  packageForm: FormGroup;
-  packageLoading = signal(false);
-  packageError = signal<string | null>(null);
+  packageDrafts = signal<PackageDraft[]>([]);
+  packageSaving = signal(false);
+  packageErrors = signal<string[]>([]);
 
   ticketsMap = signal<Record<number, Ticket[]>>({});
   expandedPackages = signal<Set<number>>(new Set());
@@ -33,16 +42,9 @@ export class EventDetailComponent implements OnInit {
     private route: ActivatedRoute,
     private router: Router,
     private eventService: EventService,
-    public authService: AuthService,
-    private fb: FormBuilder
-  ) {
-    this.packageForm = this.fb.group({
-      name: ['', Validators.required],
-      location: [''],
-      description: [''],
-      seatCount: [null, [Validators.required, Validators.min(1)]]
-    });
-  }
+    private clientService: ClientService,
+    public authService: AuthService
+  ) {}
 
   ngOnInit(): void {
     const id = Number(this.route.snapshot.paramMap.get('id'));
@@ -78,22 +80,57 @@ export class EventDetailComponent implements OnInit {
     });
   }
 
-  createPackage(): void {
-    const eventId = this.event()?.eventResponseId;
-    if (!eventId || this.packageForm.invalid) return;
-    this.packageLoading.set(true);
-    this.packageError.set(null);
+  togglePackageForm(): void {
+    const next = !this.showPackageForm();
+    this.showPackageForm.set(next);
+    if (next && this.packageDrafts().length === 0) {
+      this.addDraft();
+    }
+    if (!next) {
+      this.packageDrafts.set([]);
+      this.packageErrors.set([]);
+    }
+  }
 
-    this.eventService.createPackage(eventId, this.packageForm.value).subscribe({
-      next: (pkg) => {
-        this.packages.update(pkgs => [...pkgs, pkg]);
-        this.packageForm.reset();
+  addDraft(): void {
+    this.packageDrafts.update(drafts => [
+      ...drafts,
+      { name: '', location: '', description: '', seatCount: null }
+    ]);
+  }
+
+  removeDraft(index: number): void {
+    this.packageDrafts.update(drafts => drafts.filter((_, i) => i !== index));
+  }
+
+  saveAllPackages(): void {
+    const eventId = this.event()?.eventResponseId;
+    if (!eventId) return;
+
+    const valid = this.packageDrafts().filter(d => d.name?.trim() && d.seatCount != null && d.seatCount >= 1);
+    if (valid.length === 0) {
+      this.packageErrors.set(['Completeaza cel putin un pachet cu nume si numar de locuri.']);
+      return;
+    }
+
+    this.packageSaving.set(true);
+    this.packageErrors.set([]);
+
+    forkJoin(valid.map(d => this.eventService.createPackage(eventId, {
+      name: d.name,
+      location: d.location || undefined,
+      description: d.description || undefined,
+      seatCount: d.seatCount ?? undefined
+    }))).subscribe({
+      next: (created) => {
+        this.packages.update(pkgs => [...pkgs, ...created]);
+        this.packageDrafts.set([]);
         this.showPackageForm.set(false);
-        this.packageLoading.set(false);
+        this.packageSaving.set(false);
       },
       error: (err) => {
-        this.packageError.set(err.error?.error ?? 'Eroare la crearea pachetului');
-        this.packageLoading.set(false);
+        this.packageErrors.set([err.error?.error ?? 'Eroare la crearea pachetelor.']);
+        this.packageSaving.set(false);
       }
     });
   }
@@ -135,7 +172,22 @@ export class EventDetailComponent implements OnInit {
     const eventId = this.event()?.eventResponseId;
     if (!eventId) return;
     this.eventService.purchaseTicket(eventId, pkg.packageResponseId).subscribe({
-      next: () => this.purchaseMessage.set('Bilet cumparat cu succes!'),
+      next: (ticket) => {
+        this.packages.update(pkgs => pkgs.map(p =>
+          p.packageResponseId === pkg.packageResponseId
+            ? { ...p, availableSeats: (p.availableSeats ?? 1) - 1 }
+            : p
+        ));
+        const email = this.authService.getUserEmail();
+        if (!email) {
+          this.purchaseMessage.set(`Bilet cumparat! ID: ${ticket.ticketResponseId}`);
+          return;
+        }
+        this.clientService.addTicket(email, ticket.ticketResponseId).subscribe({
+          next: () => this.purchaseMessage.set(`Bilet inregistrat in profil! ID: ${ticket.ticketResponseId}`),
+          error: () => this.purchaseMessage.set(`Bilet cumparat, dar nu s-a putut inregistra in profil. ID: ${ticket.ticketResponseId}`)
+        });
+      },
       error: (err) => this.purchaseMessage.set(err.error?.error ?? 'Eroare la cumparare')
     });
   }

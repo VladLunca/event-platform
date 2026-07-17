@@ -116,6 +116,7 @@ services:
       AUTH_GRPC_HOST: auth-service
       AUTH_GRPC_PORT: 9090
       SERVER_PORT: 8081
+      EVENT_SERVICE_URL: http://event-service:8080
     ports:
       - "8081:8081"
     depends_on:

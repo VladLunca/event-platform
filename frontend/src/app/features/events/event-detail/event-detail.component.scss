@@ -40,33 +40,94 @@
   h2 { margin: 0; }
 }
 
+// ── Package drafts form ───────────────────────────────────────────────────────
+
 .package-form {
   background: #f9f9f9;
   border: 1px solid #ddd;
   border-radius: 8px;
   padding: 1.2rem;
   margin-bottom: 1.5rem;
-
-  h3 { margin: 0 0 1rem; }
-
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    margin-bottom: 1rem;
-
-    label { font-weight: 500; font-size: 0.9rem; }
-
-    input {
-      padding: 0.45rem 0.7rem;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      font-size: 0.95rem;
-    }
-  }
-
-  .validation { color: #c00; font-size: 0.8rem; }
+  overflow-x: auto;
 }
+
+.drafts-header {
+  display: grid;
+  grid-template-columns: 2fr 1.5fr 2fr 100px 36px;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+  padding: 0 0.2rem;
+
+  span {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+}
+
+.draft-row {
+  display: grid;
+  grid-template-columns: 2fr 1.5fr 2fr 100px 36px;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  align-items: center;
+
+  input {
+    padding: 0.45rem 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    width: 100%;
+    box-sizing: border-box;
+  }
+}
+
+.draft-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.8rem;
+}
+
+.btn-add-row {
+  padding: 0.45rem 1rem;
+  background: transparent;
+  color: #333;
+  border: 1px solid #aaa;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  &:hover { background: #eee; }
+}
+
+.btn-save {
+  padding: 0.45rem 1.2rem;
+  background: #333;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  &:disabled { background: #999; cursor: default; }
+  &:hover:not(:disabled) { background: #555; }
+}
+
+.btn-remove {
+  padding: 0;
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  color: #c00;
+  border: 1px solid #f5c6c6;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  &:hover { background: #fdecea; }
+}
+
+// ── Package cards grid ────────────────────────────────────────────────────────
 
 .packages-grid {
   display: grid;
@@ -110,6 +171,8 @@
   .ticket-owner { color: #666; }
 }
 
+// ── Messages ──────────────────────────────────────────────────────────────────
+
 .message {
   padding: 0.8rem 1rem;
   background: #e8f5e9;
@@ -118,9 +181,10 @@
   color: #2e7d32;
 }
 
-.error { color: #c00; }
+.error { color: #c00; margin-bottom: 0.5rem; }
 
-// Buttons
+// ── Buttons ───────────────────────────────────────────────────────────────────
+
 .btn-edit {
   padding: 0.4rem 0.9rem;
   background: #555;
@@ -156,6 +220,7 @@
 .btn-secondary {
   padding: 0.4rem 0.9rem;
   background: #fff;
+  color: #333;
   border: 1px solid #333;
   border-radius: 4px;
   cursor: pointer;
@@ -177,20 +242,11 @@
   margin-top: 0.5rem;
   padding: 0.35rem 0.8rem;
   background: transparent;
+  color: #333;
   border: 1px solid #aaa;
   border-radius: 4px;
   cursor: pointer;
   font-size: 0.85rem;
   width: 100%;
   &:hover { background: #f5f5f5; }
-}
-
-button {
-  padding: 0.6rem 1.2rem;
-  background: #333;
-  color: #fff;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  &:disabled { background: #999; cursor: default; }
 }

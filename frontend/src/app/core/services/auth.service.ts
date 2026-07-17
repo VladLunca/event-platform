@@ -15,6 +15,7 @@ interface RawJwtPayload {
 export class AuthService {
 
   private readonly TOKEN_KEY = 'auth_token';
+  private readonly EMAIL_KEY = 'user_email';
   private readonly apiUrl = '/api/auth';
 
   currentUser = signal<TokenPayload | null>(this.loadUserFromStorage());
@@ -25,6 +26,7 @@ export class AuthService {
     return this.http.post<AuthResponse>(`${this.apiUrl}/login`, { email, password }).pipe(
       tap(response => {
         localStorage.setItem(this.TOKEN_KEY, response.token);
+        localStorage.setItem(this.EMAIL_KEY, email);
         this.currentUser.set(this.parseToken(response.token));
       })
     );
@@ -50,8 +52,13 @@ export class AuthService {
     return this.currentUser()?.role === role;
   }
 
+  getUserEmail(): string | null {
+    return localStorage.getItem(this.EMAIL_KEY);
+  }
+
   private clearSession(): void {
     localStorage.removeItem(this.TOKEN_KEY);
+    localStorage.removeItem(this.EMAIL_KEY);
     this.currentUser.set(null);
   }
 

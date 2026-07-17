@@ -4,10 +4,16 @@
   <div class="links">
     <a routerLink="/events">Evenimente</a>
 
-    @if (authService.hasRole('ADMIN')) {
-      <a routerLink="/admin/users">Utilizatori</a>
+    @if (authService.hasRole('CLIENT')) {
+      <a routerLink="/profile">Profilul meu</a>
     }
 
-    <button (click)="logout()">Deconectare</button>
+    <a routerLink="/register">Cont nou</a>
+
+    @if (authService.isLoggedIn()) {
+      <button (click)="logout()">Deconectare</button>
+    } @else {
+      <a routerLink="/login" class="btn-login">Conectare</a>
+    }
   </div>
 </nav>

@@ -60,4 +60,7 @@ public class TicketService {
         if ("OWNER_EVENT".equals(role) && pkg.getEvent().getOwnerUserId().equals(userId)) return ticket;
         throw new ForbiddenException("Nu aveti permisiunea de a vedea acest bilet");
     }
+    public Ticket getTicketById(String ticketId) {
+        return ticketRepository.findById(ticketId).orElseThrow(() -> new NotFoundException("Biletul nu a fost gasit"));
+    }
 }

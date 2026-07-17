@@ -22,17 +22,13 @@ public class TicketController {
     private final TokenValidationService tokenValidationService;
 
     @Autowired
-    public TicketController(TicketService ticketService,
-                            TokenValidationService tokenValidationService) {
+    public TicketController(TicketService ticketService, TokenValidationService tokenValidationService) {
         this.ticketService = ticketService;
         this.tokenValidationService = tokenValidationService;
     }
 
     @GetMapping
-    public ResponseEntity<List<EntityModel<TicketResponse>>> listTickets(
-            @PathVariable Long eventId,
-            @PathVariable Long packageId,
-            @RequestHeader("Authorization") String authHeader) {
+    public ResponseEntity<List<EntityModel<TicketResponse>>> listTickets(@PathVariable Long eventId, @PathVariable Long packageId, @RequestHeader("Authorization") String authHeader) {
 
         ValidateResponse auth = tokenValidationService.requireAuth(authHeader);
         List<EntityModel<TicketResponse>> models = ticketService
@@ -44,32 +40,21 @@ public class TicketController {
     }
 
     @PostMapping
-    public ResponseEntity<EntityModel<TicketResponse>> purchaseTicket(
-            @PathVariable Long eventId,
-            @PathVariable Long packageId,
-            @RequestHeader("Authorization") String authHeader) {
-
+    public ResponseEntity<EntityModel<TicketResponse>> purchaseTicket(@PathVariable Long eventId, @PathVariable Long packageId, @RequestHeader("Authorization") String authHeader) {
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "CLIENT");
         Ticket ticket = ticketService.purchaseTicket(eventId, packageId, auth.getUserId());
         return ResponseEntity.status(HttpStatus.CREATED).body(toModel(eventId, packageId, ticket));
     }
 
     @GetMapping("/{code}")
-    public ResponseEntity<EntityModel<TicketResponse>> getTicket(
-            @PathVariable Long eventId,
-            @PathVariable Long packageId,
-            @PathVariable String code,
-            @RequestHeader("Authorization") String authHeader) {
-
+    public ResponseEntity<EntityModel<TicketResponse>> getTicket(@PathVariable Long eventId, @PathVariable Long packageId, @PathVariable String code, @RequestHeader("Authorization") String authHeader) {
         ValidateResponse auth = tokenValidationService.requireAuth(authHeader);
         Ticket ticket = ticketService.getTicket(eventId, packageId, code, auth.getUserId(), auth.getRole());
         return ResponseEntity.ok(toModel(eventId, packageId, ticket));
     }
 
     private EntityModel<TicketResponse> toModel(Long eventId, Long packageId, Ticket ticket) {
-        TicketResponse response = new TicketResponse();
-        response.setTicketResponseId(ticket.getTicketId());
-        response.setOwnerUserId(ticket.getOwnerUserId());
+        TicketResponse response = TicketResponse.from(ticket);
         response.add(Link.of("/events/" + eventId + "/packages/" + packageId + "/tickets/" + ticket.getTicketId()).withSelfRel());
         response.add(Link.of("/events/" + eventId + "/packages/" + packageId).withRel("package"));
         return EntityModel.of(response);

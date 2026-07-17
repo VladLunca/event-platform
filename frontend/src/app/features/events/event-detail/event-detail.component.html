@@ -31,47 +31,69 @@
     <div class="section-header">
       <h2>Pachete</h2>
       @if (isOwner()) {
-        <button (click)="showPackageForm.set(!showPackageForm())" class="btn-secondary">
-          {{ showPackageForm() ? 'Anuleaza' : '+ Pachet nou' }}
+        <button (click)="togglePackageForm()" class="btn-secondary">
+          {{ showPackageForm() ? 'Anuleaza' : '+ Pachete noi' }}
         </button>
       }
     </div>
 
     @if (showPackageForm()) {
       <div class="package-form">
-        <h3>Pachet nou</h3>
-
-        @if (packageError()) {
-          <p class="error">{{ packageError() }}</p>
+        @if (packageErrors().length > 0) {
+          @for (err of packageErrors(); track $index) {
+            <p class="error">{{ err }}</p>
+          }
         }
 
-        <form [formGroup]="packageForm" (ngSubmit)="createPackage()">
-          <div class="field">
-            <label>Nume *</label>
-            <input type="text" formControlName="name" />
-            @if (packageForm.get('name')?.invalid && packageForm.get('name')?.touched) {
-              <span class="validation">Numele este obligatoriu</span>
-            }
+        <div class="drafts-header">
+          <span>Nume *</span>
+          <span>Locatie</span>
+          <span>Descriere</span>
+          <span>Locuri *</span>
+          <span></span>
+        </div>
+
+        @for (draft of packageDrafts(); track $index; let i = $index) {
+          <div class="draft-row">
+            <input
+              type="text"
+              [(ngModel)]="draft.name"
+              [name]="'name' + i"
+              placeholder="ex. VIP"
+            />
+            <input
+              type="text"
+              [(ngModel)]="draft.location"
+              [name]="'location' + i"
+              placeholder="ex. Zona A"
+            />
+            <input
+              type="text"
+              [(ngModel)]="draft.description"
+              [name]="'description' + i"
+              placeholder="Descriere"
+            />
+            <input
+              type="number"
+              [(ngModel)]="draft.seatCount"
+              [name]="'seats' + i"
+              min="1"
+              placeholder="50"
+            />
+            <button type="button" (click)="removeDraft(i)" class="btn-remove">✕</button>
           </div>
-          <div class="field">
-            <label>Locatie</label>
-            <input type="text" formControlName="location" />
-          </div>
-          <div class="field">
-            <label>Descriere</label>
-            <input type="text" formControlName="description" />
-          </div>
-          <div class="field">
-            <label>Numar locuri *</label>
-            <input type="number" formControlName="seatCount" min="1" />
-            @if (packageForm.get('seatCount')?.invalid && packageForm.get('seatCount')?.touched) {
-              <span class="validation">Minim 1 loc</span>
-            }
-          </div>
-          <button type="submit" [disabled]="packageForm.invalid || packageLoading()">
-            {{ packageLoading() ? 'Se creeaza...' : 'Creeaza pachet' }}
+        }
+
+        <div class="draft-actions">
+          <button type="button" (click)="addDraft()" class="btn-add-row">+ Rand nou</button>
+          <button
+            type="button"
+            (click)="saveAllPackages()"
+            [disabled]="packageDrafts().length === 0 || packageSaving()"
+            class="btn-save">
+            {{ packageSaving() ? 'Se salveaza...' : 'Salveaza pachete' }}
           </button>
-        </form>
+        </div>
       </div>
     }
 

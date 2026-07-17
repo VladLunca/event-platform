@@ -1,0 +1,144 @@
+<div class="container">
+  <h1>Profilul meu</h1>
+
+  @if (error()) {
+    <p class="error">{{ error() }}</p>
+  }
+  @if (success()) {
+    <p class="success">{{ success() }}</p>
+  }
+
+  @if (mode() === 'loading') {
+    <p>Se incarca...</p>
+  }
+
+  @if (mode() === 'create') {
+    <div class="card">
+      <h2>Completeaza profilul</h2>
+      <form (ngSubmit)="submitCreate()">
+        <div class="field">
+          <label>Email</label>
+          <input type="email" [(ngModel)]="createForm.email" name="email" required readonly />
+        </div>
+        <div class="field">
+          <label>Prenume</label>
+          <input type="text" [(ngModel)]="createForm.firstName" name="firstName" />
+        </div>
+        <div class="field">
+          <label>Nume</label>
+          <input type="text" [(ngModel)]="createForm.lastName" name="lastName" />
+        </div>
+        <div class="field checkbox">
+          <label>
+            <input type="checkbox" [(ngModel)]="createForm.publicInfo" name="publicInfo" />
+            Profil public
+          </label>
+        </div>
+        <div class="field">
+          <label>LinkedIn</label>
+          <input type="text" [(ngModel)]="createForm.socialMedia!.linkedin" name="linkedin" placeholder="https://linkedin.com/in/..." />
+        </div>
+        <div class="field checkbox">
+          <label>
+            <input type="checkbox" [(ngModel)]="createForm.socialMedia!.publicSocialMedia" name="publicSocialMedia" />
+            Social media public
+          </label>
+        </div>
+        <button type="submit" class="btn-primary">Creeaza profil</button>
+      </form>
+    </div>
+  }
+
+  @if (mode() === 'view' && profile()) {
+    <div class="card">
+      <div class="card-header">
+        <h2>{{ profile()!.firstName || '' }} {{ profile()!.lastName || '' }}</h2>
+        <button class="btn-secondary" (click)="enterEdit()">Editeaza</button>
+      </div>
+      <div class="info-grid">
+        <span class="label">Email</span>
+        <span>{{ profile()!.email }}</span>
+
+        @if (profile()!.firstName) {
+          <span class="label">Prenume</span>
+          <span>{{ profile()!.firstName }}</span>
+        }
+        @if (profile()!.lastName) {
+          <span class="label">Nume</span>
+          <span>{{ profile()!.lastName }}</span>
+        }
+
+        <span class="label">Profil public</span>
+        <span>{{ profile()!.publicInfo ? 'Da' : 'Nu' }}</span>
+
+        @if (profile()!.socialMedia?.linkedin) {
+          <span class="label">LinkedIn</span>
+          <a [href]="profile()!.socialMedia!.linkedin" target="_blank">{{ profile()!.socialMedia!.linkedin }}</a>
+        }
+        @if (profile()!.socialMedia) {
+          <span class="label">Social media public</span>
+          <span>{{ profile()!.socialMedia!.publicSocialMedia ? 'Da' : 'Nu' }}</span>
+        }
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Biletele mele</h2>
+
+      @if (addTicketError()) {
+        <p class="error">{{ addTicketError() }}</p>
+      }
+
+      <div class="add-ticket">
+        <input type="text" [(ngModel)]="newTicketId" placeholder="ID bilet" />
+        <button class="btn-primary" (click)="addTicket()">Adauga bilet</button>
+      </div>
+
+      @if (profile()!.tickets && profile()!.tickets!.length > 0) {
+        <ul class="ticket-list">
+          @for (ticket of profile()!.tickets!; track ticket) {
+            <li class="ticket-item">{{ ticket }}</li>
+          }
+        </ul>
+      } @else {
+        <p class="empty">Nu ai bilete inregistrate.</p>
+      }
+    </div>
+  }
+
+  @if (mode() === 'edit') {
+    <div class="card">
+      <h2>Editeaza profil</h2>
+      <form (ngSubmit)="submitEdit()">
+        <div class="field">
+          <label>Prenume</label>
+          <input type="text" [(ngModel)]="editForm.firstName" name="firstName" />
+        </div>
+        <div class="field">
+          <label>Nume</label>
+          <input type="text" [(ngModel)]="editForm.lastName" name="lastName" />
+        </div>
+        <div class="field checkbox">
+          <label>
+            <input type="checkbox" [(ngModel)]="editForm.publicInfo" name="publicInfo" />
+            Profil public
+          </label>
+        </div>
+        <div class="field">
+          <label>LinkedIn</label>
+          <input type="text" [(ngModel)]="editForm.socialMedia!.linkedin" name="linkedin" placeholder="https://linkedin.com/in/..." />
+        </div>
+        <div class="field checkbox">
+          <label>
+            <input type="checkbox" [(ngModel)]="editForm.socialMedia!.publicSocialMedia" name="publicSocialMedia" />
+            Social media public
+          </label>
+        </div>
+        <div class="actions">
+          <button type="submit" class="btn-primary">Salveaza</button>
+          <button type="button" class="btn-secondary" (click)="cancelEdit()">Anuleaza</button>
+        </div>
+      </form>
+    </div>
+  }
+</div>

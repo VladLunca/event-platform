@@ -1,5 +1,4 @@
 import { Routes } from '@angular/router';
-import { authGuard } from './core/guards/auth.guard';
 import { roleGuard } from './core/guards/role.guard';
 
 export const routes: Routes = [
@@ -15,7 +14,6 @@ export const routes: Routes = [
   },
   {
     path: 'events',
-    canActivate: [authGuard],
     loadComponent: () => import('./features/events/event-list/event-list.component')
       .then(m => m.EventListComponent)
   },
@@ -33,13 +31,17 @@ export const routes: Routes = [
   },
   {
     path: 'events/:id',
-    canActivate: [authGuard],
     loadComponent: () => import('./features/events/event-detail/event-detail.component')
       .then(m => m.EventDetailComponent)
   },
   {
-    path: 'admin/users',
-    canActivate: [roleGuard(['ADMIN'])],
+    path: 'profile',
+    canActivate: [roleGuard(['CLIENT'])],
+    loadComponent: () => import('./features/profile/profile.component')
+      .then(m => m.ProfileComponent)
+  },
+  {
+    path: 'register',
     loadComponent: () => import('./features/admin/create-user/create-user.component')
       .then(m => m.CreateUserComponent)
   },

@@ -84,13 +84,7 @@ public class PackageController {
     }
 
     private EntityModel<PackageResponse> toModel(Long eventId, EventPackage pkg) {
-        PackageResponse response = new PackageResponse();
-        response.setPackageResponseId(pkg.getEventPackageId());
-        response.setName(pkg.getName());
-        response.setDescription(pkg.getDescription());
-        response.setLocation(pkg.getLocation());
-        response.setSeatCount(pkg.getSeatCount());
-        response.setAvailableSeats(packageService.getAvailableSeats(pkg.getEventPackageId(), pkg.getSeatCount()));
+        PackageResponse response = PackageResponse.from(pkg, packageService.getAvailableSeats(pkg.getEventPackageId(), pkg.getSeatCount()));
         response.add(Link.of("/events/" + eventId + "/packages/" + pkg.getEventPackageId()).withSelfRel());
         response.add(Link.of("/events/" + eventId).withRel("event"));
         response.add(Link.of("/events/" + eventId + "/packages/" + pkg.getEventPackageId() + "/tickets").withRel("tickets"));

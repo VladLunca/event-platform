@@ -5,7 +5,7 @@ export interface ClientProfile {
   publicInfo?: boolean;
   socialMedia?: {
     linkedin?: string;
-    public?: boolean;
+    publicSocialMedia?: boolean;
   };
   tickets?: string[];
 }

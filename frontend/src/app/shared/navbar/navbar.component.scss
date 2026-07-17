@@ -33,5 +33,12 @@
       cursor: pointer;
       &:hover { border-color: #fff; color: #fff; }
     }
+
+    .btn-login {
+      border: 1px solid #ccc;
+      padding: 0.3rem 0.8rem;
+      border-radius: 4px;
+      &:hover { border-color: #fff; color: #fff; }
+    }
   }
 }
