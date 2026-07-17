@@ -32,39 +32,39 @@ public class ClientController {
         this.tokenValidationService = tokenValidationService;
     }
 
-    @PostMapping
+    @PostMapping({"", "/"})
     public ResponseEntity<ClientResponse> createClient(@RequestHeader("Authorization") String authHeader, @Valid @RequestBody CreateClientRequest request) {
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "CLIENT");
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(clientService.createClient(request, auth.getUserId()));
     }
 
-    @GetMapping("/{email}")
+    @GetMapping("/{email:.+}")
     public ResponseEntity<ClientResponse> getClient(@PathVariable String email, @RequestHeader("Authorization") String authHeader) {
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "CLIENT", "OWNER_EVENT");
         return ResponseEntity.ok(clientService.getClient(email, auth.getUserId(), auth.getRole()));
     }
 
-    @PatchMapping("/{email}")
+    @PatchMapping("/{email:.+}")
     public ResponseEntity<ClientResponse> updateClient(@PathVariable String email, @RequestHeader("Authorization") String authHeader, @RequestBody UpdateClientRequest request) {
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "CLIENT");
         return ResponseEntity.ok(clientService.updateClient(email, request, auth.getUserId()));
     }
 
-    @DeleteMapping("/{email}")
+    @DeleteMapping("/{email:.+}")
     public ResponseEntity<Void> deleteClient(@PathVariable String email, @RequestHeader("Authorization") String authHeader) {
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "CLIENT");
         clientService.deleteClient(email, auth.getUserId());
         return ResponseEntity.noContent().build();
     }
 
-    @GetMapping("/{email}/tickets")
+    @GetMapping("/{email:.+}/tickets")
     public ResponseEntity<List<String>> getTickets(@PathVariable String email, @RequestHeader("Authorization") String authHeader) {
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "CLIENT");
         return ResponseEntity.ok(clientTicketService.getTickets(email, auth.getUserId()));
     }
 
-    @PostMapping("/{email}/tickets")
+    @PostMapping("/{email:.+}/tickets")
     public ResponseEntity<List<String>> addTicket(@PathVariable String email, @RequestHeader("Authorization") String authHeader, @Valid @RequestBody AddTicketRequest request) {
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "CLIENT");
         return ResponseEntity.ok(clientTicketService.addTicket(email, request.getTicketId(), auth.getUserId()));

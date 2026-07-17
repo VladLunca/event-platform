@@ -23,6 +23,16 @@ export interface Ticket {
   _links?: Record<string, { href: string }>;
 }
 
+export interface TicketDetail {
+  ticketId: string;
+  ownerUserId?: string;
+  eventId?: number;
+  eventName?: string;
+  packageId?: number;
+  packageName?: string;
+  seatCount?: number;
+}
+
 export interface PagedResponse<T> {
   content: T[];
   page: number;

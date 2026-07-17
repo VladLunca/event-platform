@@ -1,5 +1,6 @@
 package com.example.event_service.service;
 
+import com.example.event_service.dto.TicketDetailResponse;
 import com.example.event_service.exception.ForbiddenException;
 import com.example.event_service.exception.NotFoundException;
 import com.example.event_service.model.EventPackage;
@@ -62,5 +63,12 @@ public class TicketService {
     }
     public Ticket getTicketById(String ticketId) {
         return ticketRepository.findById(ticketId).orElseThrow(() -> new NotFoundException("Biletul nu a fost gasit"));
+    }
+
+    @Transactional(readOnly = true)
+    public TicketDetailResponse getTicketDetail(String ticketId) {
+        Ticket ticket = ticketRepository.findById(ticketId)
+                .orElseThrow(() -> new NotFoundException("Biletul nu a fost gasit"));
+        return TicketDetailResponse.from(ticket);
     }
 }

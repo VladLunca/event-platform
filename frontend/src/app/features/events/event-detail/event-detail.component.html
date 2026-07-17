@@ -98,7 +98,12 @@
     }
 
     @if (purchaseMessage()) {
-      <p class="message">{{ purchaseMessage() }}</p>
+      <div class="message">
+        <span>{{ purchaseMessage() }}</span>
+        @if (authService.hasRole('CLIENT')) {
+          <a routerLink="/profile" class="message-link">→ Profilul meu</a>
+        }
+      </div>
     }
 
     <div class="packages-grid">

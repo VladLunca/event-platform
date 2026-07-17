@@ -95,11 +95,26 @@
       </div>
 
       @if (profile()!.tickets && profile()!.tickets!.length > 0) {
-        <ul class="ticket-list">
+        <div class="ticket-list">
           @for (ticket of profile()!.tickets!; track ticket) {
-            <li class="ticket-item">{{ ticket }}</li>
+            @if (ticketDetails().get(ticket); as detail) {
+              <div class="ticket-card">
+                <div class="ticket-main">
+                  <span class="ticket-event">{{ detail.eventName }}</span>
+                  <span class="ticket-package">{{ detail.packageName }}</span>
+                </div>
+                <div class="ticket-meta">
+                  <span class="ticket-seats">{{ detail.seatCount }} locuri</span>
+                  <span class="ticket-id">{{ ticket | slice:0:8 }}…</span>
+                </div>
+              </div>
+            } @else {
+              <div class="ticket-card loading">
+                <span class="ticket-id-full">{{ ticket }}</span>
+              </div>
+            }
           }
-        </ul>
+        </div>
       } @else {
         <p class="empty">Nu ai bilete inregistrate.</p>
       }

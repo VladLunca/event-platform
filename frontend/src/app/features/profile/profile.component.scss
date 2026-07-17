@@ -86,17 +86,63 @@
 }
 
 .ticket-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
-.ticket-item {
-  padding: 0.5rem 0.8rem;
-  border: 1px solid #eee;
-  border-radius: 4px;
-  margin-bottom: 0.4rem;
-  font-size: 0.9rem;
+.ticket-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  background: #fafafa;
+
+  &.loading {
+    opacity: 0.6;
+  }
+}
+
+.ticket-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.ticket-event {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.ticket-package {
+  font-size: 0.85rem;
+  color: #555;
+}
+
+.ticket-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+}
+
+.ticket-seats {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #333;
+}
+
+.ticket-id {
+  font-size: 0.75rem;
+  color: #aaa;
+  font-family: monospace;
+}
+
+.ticket-id-full {
+  font-size: 0.8rem;
+  color: #888;
   font-family: monospace;
   word-break: break-all;
 }

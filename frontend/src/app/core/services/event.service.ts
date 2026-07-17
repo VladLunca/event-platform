@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { EventModel, EventPackage, Ticket } from '../models/event.model';
+import { EventModel, EventPackage, Ticket, TicketDetail } from '../models/event.model';
 
 @Injectable({ providedIn: 'root' })
 export class EventService {
@@ -58,6 +58,10 @@ export class EventService {
 
   listTickets(eventId: number, packageId: number): Observable<Ticket[]> {
     return this.http.get<Ticket[]>(`${this.apiUrl}/${eventId}/packages/${packageId}/tickets`);
+  }
+
+  getTicketDetail(ticketId: string): Observable<TicketDetail> {
+    return this.http.get<TicketDetail>(`${this.apiUrl}/tickets/${ticketId}`);
   }
 
   purchaseTicket(eventId: number, packageId: number): Observable<Ticket> {

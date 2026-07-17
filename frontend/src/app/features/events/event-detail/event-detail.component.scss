@@ -174,11 +174,22 @@
 // ── Messages ──────────────────────────────────────────────────────────────────
 
 .message {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
   padding: 0.8rem 1rem;
   background: #e8f5e9;
   border-radius: 4px;
   margin-bottom: 1rem;
   color: #2e7d32;
+}
+
+.message-link {
+  color: #2e7d32;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  &:hover { text-decoration: underline; }
 }
 
 .error { color: #c00; margin-bottom: 0.5rem; }
