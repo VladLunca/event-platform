@@ -691,8 +691,10 @@ cp .env.example .env
 | `CLIENT_DB_USER` | `client_user` | MongoDB username |
 | `CLIENT_DB_PASSWORD` | — | MongoDB password |
 | `CLIENT_DB_PORT` | `27017` | Host port for client-db |
-| `JWT_SECRET` | — | 64-character hex string (256-bit HS256 key) |
+| `JWT_SECRET` | — | 64-character hex string (256-bit HS256 key) — generate with `openssl rand -hex 32` |
 | `JWT_EXPIRATION_MS` | `86400000` | Token validity in ms (default 24 h) |
+| `ADMIN_EMAIL` | `admin@platform.com` | Email of the seeded admin account |
+| `ADMIN_PASSWORD` | — | Password of the seeded admin account |
 
 ---
 
@@ -780,12 +782,12 @@ In development, configure Angular's `proxy.conf.json` to forward `/api/*` to the
 
 ## Default Admin Account
 
-Created automatically on first startup by `DataSeeder`:
+Created automatically on first startup by `DataSeeder` using the `ADMIN_EMAIL` and `ADMIN_PASSWORD` env vars:
 
-| Field | Value |
-|-------|-------|
-| Email | `admin@platform.com` |
-| Password | `admin123` |
-| Role | `ADMIN` |
+| Field | Env var | `.env` default |
+|-------|---------|----------------|
+| Email | `ADMIN_EMAIL` | `admin@platform.com` |
+| Password | `ADMIN_PASSWORD` | *(set in `.env`)* |
+| Role | — | `ADMIN` |
 
-> Change the default credentials before any production or shared deployment.
+> Always set strong credentials in `.env` before any shared or production deployment.
