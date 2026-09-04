@@ -41,36 +41,50 @@ export class EventService {
   }
 
   deleteEvent(event: EventModel): Observable<void> {
-    return this.hateoas.followWrite<void>(event, 'delete', 'DELETE');
+    return this.hateoas.followWrite<void>(event, 'delete', 'DELETE'
+    );
   }
-
   listPackages(event: EventModel): Observable<EventPackage[]> {
     return this.hateoas.follow<EventPackage[]>(event, 'packages');
   }
 
-  createPackage(eventId: number, data: Partial<EventPackage>): Observable<EventPackage> {
-    return this.http.post<EventPackage>(`${this.apiUrl}/${eventId}/packages`, data);
+  createPackage(event: EventModel, data: Partial<EventPackage>): Observable<EventPackage> {
+    return this.hateoas.followWrite<EventPackage>(
+      event,
+      'create-package',
+      'POST',
+      data
+    );
   }
 
-  updatePackage(eventId: number, packageId: number, data: Partial<EventPackage>): Observable<EventPackage> {
-    return this.http.put<EventPackage>(`${this.apiUrl}/${eventId}/packages/${packageId}`, data);
+
+  deletePackage(packageResource: EventPackage): Observable<void> {
+    return this.hateoas.followWrite<void>(
+      packageResource,
+      'delete',
+      'DELETE'
+    );
   }
 
-  deletePackage(eventId: number, packageId: number): Observable<void> {
-    return this.http.delete<void>(`${this.apiUrl}/${eventId}/packages/${packageId}`);
+  listTickets(packageResource: EventPackage): Observable<Ticket[]> {
+    return this.hateoas.follow<Ticket[]>(
+      packageResource,
+      'tickets'
+    );
   }
 
-  listTickets(eventId: number, packageId: number): Observable<Ticket[]> {
-    return this.http.get<Ticket[]>(`${this.apiUrl}/${eventId}/packages/${packageId}/tickets`);
+  getTicketDetail(ticket: Ticket): Observable<TicketDetail> {
+    return this.hateoas.follow<TicketDetail>(
+      ticket,
+      'self'
+    );
   }
 
-  getTicketDetail(ticketId: string): Observable<TicketDetail> {
-    return this.http.get<TicketDetail>(`${this.apiUrl}/tickets/${ticketId}`);
-  }
-
-  purchaseTicket(eventId: number, packageId: number): Observable<Ticket> {
-    return this.http.post<Ticket>(
-      `${this.apiUrl}/${eventId}/packages/${packageId}/tickets`, {}
+  purchaseTicket(packageResource: EventPackage): Observable<Ticket> {
+    return this.hateoas.followWrite<Ticket>(
+      packageResource,
+      'purchase',
+      'POST'
     );
   }
 }

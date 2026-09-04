@@ -62,7 +62,5 @@ public class EventService {
         eventRepository.delete(getEvent(id));
     }
 
-    public boolean canManageEvent(Long eventId, String authHeader) {
 
-    }
 }

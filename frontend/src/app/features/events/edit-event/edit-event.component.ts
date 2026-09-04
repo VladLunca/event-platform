@@ -3,6 +3,7 @@ import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angula
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { EventService } from '../../../core/services/event.service';
+import {EventModel} from '../../../core/models/event.model';
 
 @Component({
   selector: 'app-edit-event',
@@ -17,7 +18,8 @@ export class EditEventComponent implements OnInit {
   loading = signal(false);
   loadingData = signal(true);
   error = signal<string | null>(null);
-  eventId!: number;
+  event!: EventModel;
+  eventId: number | undefined;
 
   constructor(
     private fb: FormBuilder,
@@ -31,16 +33,18 @@ export class EditEventComponent implements OnInit {
       description: ['']
     });
   }
-
   ngOnInit(): void {
     this.eventId = Number(this.route.snapshot.paramMap.get('id'));
     this.eventService.getEvent(this.eventId).subscribe({
       next: (event) => {
-        this.form.patchValue({
+        this.event = event; // 1. Salvezi resursa HATEOAS completă cu _links
+
+        this.form.patchValue({ // 2. Populezi formularul
           name: event.name,
           location: event.location ?? '',
           description: event.description ?? ''
         });
+
         this.loadingData.set(false);
       },
       error: () => {
@@ -50,12 +54,14 @@ export class EditEventComponent implements OnInit {
     });
   }
 
+
   submit(): void {
+
     if (this.form.invalid) return;
     this.loading.set(true);
     this.error.set(null);
 
-    this.eventService.updateEvent(this.eventId, this.form.value).subscribe({
+    this.eventService.updateEvent(this.event!, this.form.value).subscribe({
       next: () => this.router.navigate(['/events', this.eventId]),
       error: (err) => {
         this.error.set(err.error?.error ?? 'Eroare la actualizarea evenimentului');

@@ -1,7 +1,8 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, signal, DestroyRef, inject } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { forkJoin } from 'rxjs';
 import { EventService } from '../../../core/services/event.service';
 import { AuthService } from '../../../core/services/auth.service';
@@ -23,6 +24,8 @@ interface PackageDraft {
   styleUrl: './event-detail.component.scss'
 })
 export class EventDetailComponent implements OnInit {
+
+  private destroyRef = inject(DestroyRef);
 
   event = signal<EventModel | null>(null);
   packages = signal<EventPackage[]>([]);
@@ -49,21 +52,29 @@ export class EventDetailComponent implements OnInit {
   ngOnInit(): void {
     const id = Number(this.route.snapshot.paramMap.get('id'));
     this.loading.set(true);
-    this.eventService.getEvent(id).subscribe({
-      next: (event) => {
-        this.event.set(event);
-        this.eventService.listPackages(id).subscribe({
-          next: (pkgs) => {
-            this.packages.set(pkgs);
-            this.loading.set(false);
-          }
-        });
-      },
-      error: () => {
-        this.error.set('Evenimentul nu a fost gasit');
-        this.loading.set(false);
-      }
-    });
+
+    this.eventService.getEvent(id)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (event) => {
+          this.event.set(event);
+
+          // HATEOAS: Transmitem obiectul `event` primit, nu `id`
+          this.eventService.listPackages(event)
+            .pipe(takeUntilDestroyed(this.destroyRef))
+            .subscribe({
+              next: (pkgs) => {
+                this.packages.set(pkgs);
+                this.loading.set(false);
+              },
+              error: () => this.loading.set(false)
+            });
+        },
+        error: () => {
+          this.error.set('Evenimentul nu a fost gasit');
+          this.loading.set(false);
+        }
+      });
   }
 
   isOwner(): boolean {
@@ -71,13 +82,17 @@ export class EventDetailComponent implements OnInit {
   }
 
   deleteEvent(): void {
-    const id = this.event()?.eventResponseId;
-    if (!id) return;
+    const currentEvent = this.event();
+    if (!currentEvent) return;
     if (!confirm('Esti sigur ca vrei sa stergi acest eveniment?')) return;
-    this.eventService.deleteEvent(id).subscribe({
-      next: () => this.router.navigate(['/events']),
-      error: (err) => this.error.set(err.error?.error ?? 'Eroare la stergere')
-    });
+
+    // HATEOAS: Transmitem obiectul `currentEvent`
+    this.eventService.deleteEvent(currentEvent)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: () => this.router.navigate(['/events']),
+        error: (err) => this.error.set(err.error?.error ?? 'Eroare la stergere')
+      });
   }
 
   togglePackageForm(): void {
@@ -104,8 +119,8 @@ export class EventDetailComponent implements OnInit {
   }
 
   saveAllPackages(): void {
-    const eventId = this.event()?.eventResponseId;
-    if (!eventId) return;
+    const currentEvent = this.event();
+    if (!currentEvent) return;
 
     const valid = this.packageDrafts().filter(d => d.name?.trim() && d.seatCount != null && d.seatCount >= 1);
     if (valid.length === 0) {
@@ -116,51 +131,59 @@ export class EventDetailComponent implements OnInit {
     this.packageSaving.set(true);
     this.packageErrors.set([]);
 
-    forkJoin(valid.map(d => this.eventService.createPackage(eventId, {
+    // HATEOAS: Transmitem `currentEvent` la createPackage
+    forkJoin(valid.map(d => this.eventService.createPackage(currentEvent, {
       name: d.name,
       location: d.location || undefined,
       description: d.description || undefined,
       seatCount: d.seatCount ?? undefined
-    }))).subscribe({
-      next: (created) => {
-        this.packages.update(pkgs => [...pkgs, ...created]);
-        this.packageDrafts.set([]);
-        this.showPackageForm.set(false);
-        this.packageSaving.set(false);
-      },
-      error: (err) => {
-        this.packageErrors.set([err.error?.error ?? 'Eroare la crearea pachetelor.']);
-        this.packageSaving.set(false);
-      }
-    });
+    })))
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (created) => {
+          this.packages.update(pkgs => [...pkgs, ...created]);
+          this.packageDrafts.set([]);
+          this.showPackageForm.set(false);
+          this.packageSaving.set(false);
+        },
+        error: (err) => {
+          this.packageErrors.set([err.error?.error ?? 'Eroare la crearea pachetelor.']);
+          this.packageSaving.set(false);
+        }
+      });
   }
 
   deletePackage(pkg: EventPackage): void {
-    const eventId = this.event()?.eventResponseId;
-    if (!eventId) return;
     if (!confirm(`Stergi pachetul "${pkg.name}"?`)) return;
-    this.eventService.deletePackage(eventId, pkg.packageResponseId).subscribe({
-      next: () => this.packages.update(pkgs => pkgs.filter(p => p.packageResponseId !== pkg.packageResponseId)),
-      error: (err) => this.error.set(err.error?.error ?? 'Eroare la stergerea pachetului')
-    });
+
+    // HATEOAS: Transmitem resursa `pkg` (EventPackage) care conține link-ul de ștergere
+    this.eventService.deletePackage(pkg)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: () => this.packages.update(pkgs => pkgs.filter(p => p !== pkg)),
+        error: (err) => this.error.set(err.error?.error ?? 'Eroare la stergerea pachetului')
+      });
   }
 
   toggleTickets(pkg: EventPackage): void {
-    const eventId = this.event()?.eventResponseId;
-    if (!eventId) return;
+    const pkgId = pkg.packageResponseId;
     const expanded = new Set(this.expandedPackages());
-    if (expanded.has(pkg.packageResponseId)) {
-      expanded.delete(pkg.packageResponseId);
+
+    if (expanded.has(pkgId)) {
+      expanded.delete(pkgId);
       this.expandedPackages.set(expanded);
       return;
     }
-    expanded.add(pkg.packageResponseId);
+    expanded.add(pkgId);
     this.expandedPackages.set(expanded);
 
-    if (!this.ticketsMap()[pkg.packageResponseId]) {
-      this.eventService.listTickets(eventId, pkg.packageResponseId).subscribe({
-        next: (tickets) => this.ticketsMap.update(m => ({ ...m, [pkg.packageResponseId]: tickets }))
-      });
+    if (!this.ticketsMap()[pkgId]) {
+      // HATEOAS: Transmitem resursa `pkg` (EventPackage)
+      this.eventService.listTickets(pkg)
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          next: (tickets) => this.ticketsMap.update(m => ({ ...m, [pkgId]: tickets }))
+        });
     }
   }
 
@@ -169,26 +192,29 @@ export class EventDetailComponent implements OnInit {
   }
 
   purchase(pkg: EventPackage): void {
-    const eventId = this.event()?.eventResponseId;
-    if (!eventId) return;
-    this.eventService.purchaseTicket(eventId, pkg.packageResponseId).subscribe({
-      next: (ticket) => {
-        this.packages.update(pkgs => pkgs.map(p =>
-          p.packageResponseId === pkg.packageResponseId
-            ? { ...p, availableSeats: (p.availableSeats ?? 1) - 1 }
-            : p
-        ));
-        const email = this.authService.getUserEmail();
-        if (!email) {
-          this.purchaseMessage.set(`Bilet cumparat! ID: ${ticket.ticketResponseId}`);
-          return;
-        }
-        this.clientService.addTicket(email, ticket.ticketResponseId).subscribe({
-          next: () => this.purchaseMessage.set(`Bilet inregistrat in profil! ID: ${ticket.ticketResponseId}`),
-          error: () => this.purchaseMessage.set(`Bilet cumparat, dar nu s-a putut inregistra in profil. ID: ${ticket.ticketResponseId}`)
-        });
-      },
-      error: (err) => this.purchaseMessage.set(err.error?.error ?? 'Eroare la cumparare')
-    });
+    // HATEOAS: Transmitem resursa `pkg`
+    this.eventService.purchaseTicket(pkg)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (ticket) => {
+          this.packages.update(pkgs => pkgs.map(p =>
+            p === pkg
+              ? { ...p, availableSeats: (p.availableSeats ?? 1) - 1 }
+              : p
+          ));
+          const email = this.authService.getUserEmail();
+          if (!email) {
+            this.purchaseMessage.set(`Bilet cumparat! ID: ${ticket.ticketResponseId}`);
+            return;
+          }
+          this.clientService.addTicket(email, ticket.ticketResponseId)
+            .pipe(takeUntilDestroyed(this.destroyRef))
+            .subscribe({
+              next: () => this.purchaseMessage.set(`Bilet inregistrat in profil! ID: ${ticket.ticketResponseId}`),
+              error: () => this.purchaseMessage.set(`Bilet cumparat, dar nu s-a putut inregistra in profil. ID: ${ticket.ticketResponseId}`)
+            });
+        },
+        error: (err) => this.purchaseMessage.set(err.error?.error ?? 'Eroare la cumparare')
+      });
   }
 }

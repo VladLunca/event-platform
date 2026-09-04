@@ -3,6 +3,7 @@ package com.example.event_service.controller;
 import com.example.auth.grpc.ValidateResponse;
 import com.example.event_service.dto.CreatePackageRequest;
 import com.example.event_service.dto.PackageResponse;
+import com.example.event_service.model.Event;
 import com.example.event_service.model.EventPackage;
 import com.example.event_service.service.EventService;
 import com.example.event_service.service.PackageService;
@@ -23,12 +24,14 @@ public class PackageController {
 
     private final PackageService packageService;
     private final TokenValidationService tokenValidationService;
+    private final EventService eventService;
 
     @Autowired
     public PackageController(PackageService packageService,
-                             TokenValidationService tokenValidationService) {
+                             TokenValidationService tokenValidationService, EventService eventService) {
         this.packageService = packageService;
         this.tokenValidationService = tokenValidationService;
+        this.eventService = eventService;
     }
 
     @GetMapping
@@ -37,7 +40,7 @@ public class PackageController {
 
         List<EntityModel<PackageResponse>> models = packageService.listPackages(eventId)
                 .stream()
-                .map(pkg -> toModel(eventId, pkg,authHeader))
+                .map(pkg -> toModel(eventId, pkg,eventService.getEvent(eventId),tokenValidationService.validateSilently(authHeader).orElse(null)))
                 .toList();
         return ResponseEntity.ok(models);
     }
@@ -48,7 +51,7 @@ public class PackageController {
             @PathVariable Long packageId,
             @RequestHeader(value = "Authorization", required = false) String authHeader ) {
 
-        return ResponseEntity.ok(toModel(eventId, packageService.getPackage(eventId, packageId), authHeader));
+        return ResponseEntity.ok(toModel(eventId, packageService.getPackage(eventId, packageId),eventService.getEvent(eventId), tokenValidationService.validateSilently(authHeader).orElse(null)));
     }
 
     @PostMapping
@@ -59,7 +62,7 @@ public class PackageController {
 
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "OWNER_EVENT", "ADMIN");
         EventPackage pkg = packageService.createPackage(eventId, request, auth.getUserId());
-        return ResponseEntity.status(HttpStatus.CREATED).body(toModel(eventId, pkg, authHeader));
+        return ResponseEntity.status(HttpStatus.CREATED).body(toModel(eventId, pkg, eventService.getEvent(eventId),tokenValidationService.validateSilently(authHeader).orElse(null)));
     }
 
     @PutMapping("/{packageId}")
@@ -71,7 +74,7 @@ public class PackageController {
 
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "OWNER_EVENT", "ADMIN");
         EventPackage pkg = packageService.updatePackage(eventId, packageId, request, auth.getUserId());
-        return ResponseEntity.ok(toModel(eventId, pkg,authHeader));
+        return ResponseEntity.ok(toModel(eventId, pkg,eventService.getEvent(eventId),tokenValidationService.validateSilently(authHeader).orElse(null)));
     }
 
     @DeleteMapping("/{packageId}")
@@ -86,21 +89,33 @@ public class PackageController {
     }
 
 
-    private EntityModel<PackageResponse> toModel(Long eventId, EventPackage pkg, String authHeader) {
-        PackageResponse response = PackageResponse.from(pkg, packageService.getAvailableSeats(pkg.getEventPackageId(), pkg.getSeatCount()));
-        response.add(Link.of("/events/" + eventId + "/packages/" + pkg.getEventPackageId()).withSelfRel());
-        response.add(Link.of("/events/" + eventId).withRel("event"));
-        try {
-            if (tokenValidationService.requireRole(authHeader, "OWNER_EVENT", "ADMIN") != null) {
-                response.add(Link.of(".../packages/" + pkg.getEventPackageId()).withRel("edit-package"));
-                response.add(Link.of(".../packages/" + pkg.getEventPackageId()).withRel("delete-package"));
-            }
-            if (tokenValidationService.requireRole(authHeader, "CLIENT") != null) {
-                response.add(Link.of(".../packages/" + pkg.getEventPackageId() + "/tickets").withRel("purchase"));
-            }
-        } catch (Exception e) {
+    private boolean canManage(Event event, ValidateResponse auth) {
+        boolean isAdmin = auth.getRole().equals("ADMIN");
+        boolean isOwner = auth.getRole().equals( "OWNER_EVENT")
+                && event.getOwnerUserId().equals(auth != null ? auth.getUserId() : null);
+        return isAdmin || isOwner;
+    }
+    private boolean isClient(ValidateResponse auth) {
+        return auth != null && "CLIENT".equals(auth.getRole());
+    }
+    private EntityModel<PackageResponse> toModel(Long eventId, EventPackage pkg, Event event, ValidateResponse auth) {
+        int availableSeats = packageService.getAvailableSeats(pkg.getEventPackageId(), pkg.getSeatCount());
+        PackageResponse response = PackageResponse.from(pkg, availableSeats);
 
+        String packagePath = "/events/" + eventId + "/packages/" + pkg.getEventPackageId();
+
+        response.add(Link.of(packagePath).withSelfRel());
+        response.add(Link.of("/events/" + eventId).withRel("event"));
+
+        if (canManage(event, auth)) {
+            response.add(Link.of(packagePath).withRel("edit-package"));
+            response.add(Link.of(packagePath).withRel("delete-package"));
         }
+
+        if (isClient(auth)) {
+            response.add(Link.of(packagePath + "/tickets").withRel("purchase"));
+        }
+
         return EntityModel.of(response);
     }
 }

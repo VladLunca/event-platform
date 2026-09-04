@@ -8,6 +8,8 @@ import org.apache.coyote.BadRequestException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
+
 @Service
 public class TokenValidationService {
     private final AuthGrpcClient authGrpcClient;
@@ -33,5 +35,16 @@ public class TokenValidationService {
             if (role.equals(response.getRole())) return response;
         }
         throw new ForbiddenException("Nu aveti permisiunile necesare");
+    }
+    public Optional<ValidateResponse> validateSilently(String authHeader) {
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            return Optional.empty();
+        }
+        try {
+            ValidateResponse response = requireAuth(authHeader);
+            return Optional.of(response);
+        } catch (Exception e) {
+            return Optional.empty();
+        }
     }
 }

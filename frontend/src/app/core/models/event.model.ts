@@ -20,7 +20,7 @@ export interface EventPackage {
 export interface Ticket {
   ticketResponseId: string;
   ownerUserId?: string;
-  _links?: Record<string, { href: string }>;
+  _links: Record<string, { href: string }>;
 }
 
 export interface TicketDetail {
