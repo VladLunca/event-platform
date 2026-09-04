@@ -4,7 +4,7 @@ export interface EventModel {
   location?: string;
   description?: string;
   seatCount?: number;
-  _links?: Record<string, { href: string }>;
+  _links: Record<string, { href: string }>;
 }
 
 export interface EventPackage {
@@ -14,7 +14,7 @@ export interface EventPackage {
   description?: string;
   seatCount?: number;
   availableSeats?: number;
-  _links?: Record<string, { href: string }>;
+  _links: Record<string, { href: string }>;
 }
 
 export interface Ticket {

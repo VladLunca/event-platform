@@ -34,31 +34,33 @@ public class EventController {
     }
 
     @GetMapping
-    public ResponseEntity<List<EntityModel<EventResponse>>> listEvents(@RequestParam(required = false) String name, @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "10") int size) {
+    public ResponseEntity<List<EntityModel<EventResponse>>> listEvents(@RequestParam(required = false) String name, @RequestParam(defaultValue = "0") int page,
+                                                                       @RequestParam(defaultValue = "10") int size,@RequestHeader(value = "Authorization", required = false) String authHeader) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("name").ascending());
         Page<Event> eventPage = eventService.listEvents(name, pageable);
         List<EntityModel<EventResponse>> models = eventPage.getContent().stream()
-                .map(this::toModel)
+                .map((event) -> toModel(event,authHeader))
                 .toList();
         return ResponseEntity.ok(models);
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<EntityModel<EventResponse>> getEvent(@PathVariable Long id) {
-        return ResponseEntity.ok(toModel(eventService.getEvent(id)));
+    public ResponseEntity<EntityModel<EventResponse>> getEvent(@PathVariable Long id,@RequestHeader(value = "Authorization", required = false) String authHeader) {
+        return ResponseEntity.ok(toModel(eventService.getEvent(id),authHeader));
     }
 
     @PostMapping
     public ResponseEntity<EntityModel<EventResponse>> createEvent(@RequestHeader("Authorization") String authHeader, @Valid @RequestBody CreateEventRequest request) {
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "OWNER_EVENT", "ADMIN");
         Event event = eventService.createEvent(request, auth.getUserId());
-        return ResponseEntity.status(HttpStatus.CREATED).body(toModel(event));
+        return ResponseEntity.status(HttpStatus.CREATED).body(toModel(event,authHeader));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<EntityModel<EventResponse>> updateEvent(@PathVariable Long id, @RequestHeader("Authorization") String authHeader, @Valid @RequestBody CreateEventRequest request) {
+    public ResponseEntity<EntityModel<EventResponse>> updateEvent(@PathVariable Long id, @RequestHeader("Authorization") String authHeader,
+                                                                  @Valid @RequestBody CreateEventRequest request) {
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "OWNER_EVENT", "ADMIN");
-        return ResponseEntity.ok(toModel(eventService.updateEvent(id, request, auth.getUserId())));
+        return ResponseEntity.ok(toModel(eventService.updateEvent(id, request, auth.getUserId()), authHeader));
     }
 
     @DeleteMapping("/{id}")
@@ -68,10 +70,20 @@ public class EventController {
         return ResponseEntity.noContent().build();
     }
 
-    private EntityModel<EventResponse> toModel(Event event) {
+    private EntityModel<EventResponse> toModel(Event event,String authHeader) {
         EventResponse response = EventResponse.from(event);
         response.add(Link.of("/events/" + event.getEventId()).withSelfRel());
         response.add(Link.of("/events/" + event.getEventId() + "/packages").withRel("packages"));
+        try {
+            if (tokenValidationService.requireRole(authHeader, "OWNER_EVENT") != null) {
+                response.add(Link.of("/events/" + event.getEventId()).withRel("edit"));
+                response.add(Link.of("/events/" + event.getEventId()).withRel("delete"));
+                response.add(Link.of("/events/" + event.getEventId() + "/packages").withRel("create-package"));
+            }
+        }
+        catch (Exception e) {
+
+        }
         return EntityModel.of(response);
     }
 }

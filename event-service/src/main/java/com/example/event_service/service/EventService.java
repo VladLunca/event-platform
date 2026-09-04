@@ -61,4 +61,8 @@ public class EventService {
         checkOwnership(id, userId);
         eventRepository.delete(getEvent(id));
     }
+
+    public boolean canManageEvent(Long eventId, String authHeader) {
+
+    }
 }
