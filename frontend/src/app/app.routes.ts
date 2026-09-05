@@ -36,13 +36,13 @@ export const routes: Routes = [
   },
   {
     path: 'profile',
-    canActivate: [roleGuard(['CLIENT'])],
     loadComponent: () => import('./features/profile/profile.component')
       .then(m => m.ProfileComponent)
   },
   {
-    path: 'register',
-    loadComponent: () => import('./features/admin/create-user/create-user.component')
+    path: 'manage-user',
+    canActivate: [roleGuard(['ADMIN'])],
+    loadComponent: () => import('./features/admin/manage-user/create-user.component')
       .then(m => m.CreateUserComponent)
   },
   {

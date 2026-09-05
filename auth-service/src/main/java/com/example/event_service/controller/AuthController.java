@@ -3,8 +3,10 @@ package com.example.event_service.controller;
 import com.example.event_service.dto.CreateUserRequest;
 import com.example.event_service.dto.LoginRequest;
 import com.example.event_service.exception.InvalidCredentialsException;
+import com.example.event_service.model.User;
 import com.example.event_service.service.AuthService;
 import com.example.event_service.service.JwtService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -41,7 +43,16 @@ public class AuthController {
         authService.logout(token);
         return ResponseEntity.ok(Map.of("success", true));
     }
-
+    @PostMapping("/register")
+    public ResponseEntity<?> register(@Valid @RequestBody CreateUserRequest request) {
+        try {
+            String token = authService.register(request.getEmail(), request.getPassword());
+            return ResponseEntity.status(HttpStatus.CREATED).body(Map.of("token", token));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
     @PostMapping("/users")
     public ResponseEntity<?> createUser(@RequestHeader("Authorization") String authHeader,
                                         @RequestBody CreateUserRequest request) {

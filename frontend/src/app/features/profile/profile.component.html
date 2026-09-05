@@ -18,8 +18,16 @@
       <form (ngSubmit)="submitCreate()">
         <div class="field">
           <label>Email</label>
-          <input type="email" [(ngModel)]="createForm.email" name="email" required readonly />
+          <input type="email" [(ngModel)]="createForm.email" name="email" required [readonly]="isEditingExistingAccount" />
         </div>
+
+        @if (!isEditingExistingAccount) {
+          <div class="field">
+            <label>Parola</label>
+            <input type="password" [(ngModel)]="createForm.password" name="password" required minlength="6" />
+          </div>
+        }
+
         <div class="field">
           <label>Prenume</label>
           <input type="text" [(ngModel)]="createForm.firstName" name="firstName" />

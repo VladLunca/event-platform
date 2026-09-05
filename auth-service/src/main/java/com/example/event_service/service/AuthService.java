@@ -58,4 +58,8 @@ public class AuthService {
         user.setRole(Role.valueOf(role));
         userRepository.save(user);
     }
+    public String register(String email, String password) {
+        createUser(email, password, "CLIENT");
+        return login(email, password);
+    }
 }

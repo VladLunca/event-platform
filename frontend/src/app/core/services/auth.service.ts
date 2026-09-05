@@ -21,7 +21,15 @@ export class AuthService {
   currentUser = signal<TokenPayload | null>(this.loadUserFromStorage());
 
   constructor(private http: HttpClient) {}
-
+  register(data: { email: string; password: string }): Observable<AuthResponse> {
+    return this.http.post<AuthResponse>(`${this.apiUrl}/register`, data).pipe(
+      tap(response => {
+        localStorage.setItem(this.TOKEN_KEY, response.token);
+        localStorage.setItem(this.EMAIL_KEY, data.email);
+        this.currentUser.set(this.parseToken(response.token));
+      })
+    );
+  }
   login(email: string, password: string): Observable<AuthResponse> {
     return this.http.post<AuthResponse>(`${this.apiUrl}/login`, { email, password }).pipe(
       tap(response => {
@@ -89,5 +97,4 @@ export class AuthService {
   createUser(data: { email: string; password: string; role: string }): Observable<unknown> {
     return this.http.post(`${this.apiUrl}/users`, data);
   }
-
 }

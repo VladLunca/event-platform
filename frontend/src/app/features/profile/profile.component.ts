@@ -8,7 +8,7 @@ import { ClientService, CreateClientRequest, UpdateClientRequest } from '../../c
 import { EventService } from '../../core/services/event.service';
 import { ClientProfile } from '../../core/models/client.model';
 import { Ticket, TicketDetail } from '../../core/models/event.model';
-
+import { switchMap } from 'rxjs/operators';
 type Mode = 'loading' | 'create' | 'view' | 'edit';
 
 @Component({
@@ -28,9 +28,9 @@ export class ProfileComponent implements OnInit {
   success = signal<string | null>(null);
 
   email = '';
-
-  createForm: CreateClientRequest = {
+  createForm: CreateClientRequest & { password?: string } = {
     email: '',
+    password: '',
     firstName: '',
     lastName: '',
     publicInfo: false,
@@ -56,9 +56,8 @@ export class ProfileComponent implements OnInit {
 
   ngOnInit(): void {
     const userEmail = this.authService.getUserEmail();
-    if (!userEmail) {
-      this.error.set('Nu s-a putut determina emailul utilizatorului. Reconectati-va.');
-      this.mode.set('view');
+    if (!userEmail|| !this.authService.isLoggedIn()) {
+      this.mode.set('create');
       return;
     }
     this.email = userEmail;
@@ -67,7 +66,6 @@ export class ProfileComponent implements OnInit {
 
   private loadTicketDetails(tickets: string[]): void {
     tickets.forEach(id => {
-      // Adaugă 'as unknown as Ticket' pentru a permite casting-ul sintetic
       const ticketResource = {
         ticketResponseId: id,
         _links: {
@@ -110,18 +108,46 @@ export class ProfileComponent implements OnInit {
 
   submitCreate(): void {
     this.error.set(null);
-    this.clientService.createProfile(this.createForm)
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
+
+    if (this.authService.isLoggedIn()) {
+      // user autentificat, doar fără profil -> flux vechi, neschimbat
+      this.clientService.createProfile(this.createForm)
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          next: (data) => {
+            this.profile.set(data);
+            this.email = data.email;
+            this.mode.set('view');
+            this.success.set('Profil creat cu succes!');
+          },
+          error: (err: HttpErrorResponse) => {
+            this.error.set(err.error?.error ?? 'Eroare la crearea profilului.');
+          }
+        });
+    } else {
+      if (!this.createForm.password) {
+        this.error.set('Parola este obligatorie.');
+        return;
+      }
+
+      this.authService.register({
+        email: this.createForm.email,
+        password: this.createForm.password
+      }).pipe(
+        switchMap(() => this.clientService.createProfile(this.createForm)),
+        takeUntilDestroyed(this.destroyRef)
+      ).subscribe({
         next: (data) => {
           this.profile.set(data);
+          this.email = data.email;
           this.mode.set('view');
-          this.success.set('Profil creat cu succes!');
+          this.success.set('Cont si profil create cu succes!');
         },
         error: (err: HttpErrorResponse) => {
-          this.error.set(err.error?.error ?? 'Eroare la crearea profilului.');
+          this.error.set(err.error?.error ?? 'Eroare la crearea contului.');
         }
       });
+    }
   }
 
   enterEdit(): void {
@@ -182,5 +208,8 @@ export class ProfileComponent implements OnInit {
           this.addTicketError.set(err.error?.error ?? 'Eroare la adaugarea biletului.');
         }
       });
+  }
+  get isEditingExistingAccount(): boolean {
+    return this.authService.isLoggedIn();
   }
 }
