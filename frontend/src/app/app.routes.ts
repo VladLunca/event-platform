@@ -42,8 +42,8 @@ export const routes: Routes = [
   {
     path: 'manage-user',
     canActivate: [roleGuard(['ADMIN'])],
-    loadComponent: () => import('./features/admin/manage-user/create-user.component')
-      .then(m => m.CreateUserComponent)
+    loadComponent: () => import('./features/admin/manage-user/update-role.component')
+      .then(m => m.UpdateRoleComponent)
   },
   {
     path: '',

@@ -4,13 +4,13 @@ import { CommonModule } from '@angular/common';
 import { AuthService } from '../../../core/services/auth.service';
 
 @Component({
-  selector: 'app-create-user',
+  selector: 'app-update-role',
   standalone: true,
   imports: [CommonModule, ReactiveFormsModule],
-  templateUrl: './create-user.component.html',
-  styleUrl: './create-user.component.scss'
+  templateUrl: './update-role.component.html',
+  styleUrl: './update-role.component.scss'
 })
-export class CreateUserComponent {
+export class UpdateRoleComponent {
 
   form: FormGroup;
   loading = signal(false);
@@ -22,7 +22,6 @@ export class CreateUserComponent {
   constructor(private fb: FormBuilder, private authService: AuthService) {
     this.form = this.fb.group({
       email: ['', [Validators.required, Validators.email]],
-      password: ['', [Validators.required, Validators.minLength(6)]],
       role: ['CLIENT', Validators.required]
     });
   }
@@ -33,14 +32,14 @@ export class CreateUserComponent {
     this.success.set(null);
     this.error.set(null);
 
-    this.authService.createUser(this.form.value).subscribe({
+    this.authService.updateUserRole(this.form.value).subscribe({
       next: () => {
-        this.success.set('Utilizatorul a fost creat cu succes');
+        this.success.set('Rolul utilizatorului a fost actualizat cu succes');
         this.form.reset({ role: 'CLIENT' });
         this.loading.set(false);
       },
       error: (err) => {
-        this.error.set(err.error?.error ?? 'Eroare la crearea utilizatorului');
+        this.error.set(err.error?.error ?? 'Eroare la actualizarea rolului');
         this.loading.set(false);
       }
     });

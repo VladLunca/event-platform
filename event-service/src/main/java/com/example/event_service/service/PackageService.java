@@ -50,11 +50,18 @@ public class PackageService {
         return packageRepository.findAllByEvent_EventId(eventId);
     }
 
-    @Transactional
-    public EventPackage createPackage(Long eventId, CreatePackageRequest request, String userId) {
+    private void checkOwnership(Long eventId, String userId, String role) {
+        if ("ADMIN".equals(role)) {
+            return;
+        }
         if (!eventRepository.existsByEventIdAndOwnerUserId(eventId, userId)) {
             throw new ForbiddenException("Nu detineti acest eveniment");
         }
+    }
+
+    @Transactional
+    public EventPackage createPackage(Long eventId, CreatePackageRequest request, String userId, String role) {
+        checkOwnership(eventId, userId, role);
         Event event = eventRepository.findById(eventId).orElseThrow(() -> new NotFoundException("Evenimentul nu a fost gasit"));
         EventPackage pkg = new EventPackage();
         pkg.setName(request.getName());
@@ -66,10 +73,8 @@ public class PackageService {
     }
 
     @Transactional
-    public EventPackage updatePackage(Long eventId, Long packageId, CreatePackageRequest request, String userId) {
-        if (!eventRepository.existsByEventIdAndOwnerUserId(eventId, userId)) {
-            throw new ForbiddenException("Nu detineti acest eveniment");
-        }
+    public EventPackage updatePackage(Long eventId, Long packageId, CreatePackageRequest request, String userId, String role) {
+        checkOwnership(eventId, userId, role);
         EventPackage pkg = getPackage(eventId, packageId);
         pkg.setName(request.getName());
         pkg.setDescription(request.getDescription());
@@ -79,10 +84,8 @@ public class PackageService {
     }
 
     @Transactional
-    public void deletePackage(Long eventId, Long packageId, String userId) {
-        if (!eventRepository.existsByEventIdAndOwnerUserId(eventId, userId)) {
-            throw new ForbiddenException("Nu detineti acest eveniment");
-        }
+    public void deletePackage(Long eventId, Long packageId, String userId, String role) {
+        checkOwnership(eventId, userId, role);
         packageRepository.delete(getPackage(eventId, packageId));
     }
 }

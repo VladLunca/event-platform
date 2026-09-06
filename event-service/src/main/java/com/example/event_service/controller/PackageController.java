@@ -10,6 +10,7 @@ import com.example.event_service.service.PackageService;
 import com.example.event_service.service.TokenValidationService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.hateoas.CollectionModel;
 import org.springframework.hateoas.EntityModel;
 import org.springframework.hateoas.Link;
 import org.springframework.http.HttpStatus;
@@ -35,14 +36,14 @@ public class PackageController {
     }
 
     @GetMapping
-    public ResponseEntity<List<EntityModel<PackageResponse>>> listPackages(
+    public ResponseEntity<CollectionModel<EntityModel<PackageResponse>>> listPackages(
             @PathVariable Long eventId,    @RequestHeader("Authorization") String authHeader) {
 
         List<EntityModel<PackageResponse>> models = packageService.listPackages(eventId)
                 .stream()
                 .map(pkg -> toModel(eventId, pkg,eventService.getEvent(eventId),tokenValidationService.validateSilently(authHeader).orElse(null)))
                 .toList();
-        return ResponseEntity.ok(models);
+        return ResponseEntity.ok(CollectionModel.of(models));
     }
 
     @GetMapping("/{packageId}")
@@ -61,7 +62,7 @@ public class PackageController {
             @Valid @RequestBody CreatePackageRequest request) {
 
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "OWNER_EVENT", "ADMIN");
-        EventPackage pkg = packageService.createPackage(eventId, request, auth.getUserId());
+        EventPackage pkg = packageService.createPackage(eventId, request, auth.getUserId(), auth.getRole());
         return ResponseEntity.status(HttpStatus.CREATED).body(toModel(eventId, pkg, eventService.getEvent(eventId),tokenValidationService.validateSilently(authHeader).orElse(null)));
     }
 
@@ -73,7 +74,7 @@ public class PackageController {
             @Valid @RequestBody CreatePackageRequest request) {
 
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "OWNER_EVENT", "ADMIN");
-        EventPackage pkg = packageService.updatePackage(eventId, packageId, request, auth.getUserId());
+        EventPackage pkg = packageService.updatePackage(eventId, packageId, request, auth.getUserId(), auth.getRole());
         return ResponseEntity.ok(toModel(eventId, pkg,eventService.getEvent(eventId),tokenValidationService.validateSilently(authHeader).orElse(null)));
     }
 
@@ -84,15 +85,19 @@ public class PackageController {
             @RequestHeader("Authorization") String authHeader) {
 
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "OWNER_EVENT", "ADMIN");
-        packageService.deletePackage(eventId, packageId, auth.getUserId());
+        packageService.deletePackage(eventId, packageId, auth.getUserId(), auth.getRole());
         return ResponseEntity.noContent().build();
     }
 
 
     private boolean canManage(Event event, ValidateResponse auth) {
-        boolean isAdmin = auth.getRole().equals("ADMIN");
-        boolean isOwner = auth.getRole().equals( "OWNER_EVENT")
-                && event.getOwnerUserId().equals(auth != null ? auth.getUserId() : null);
+        if (auth == null || auth.getRole() == null) {
+            return false;
+        }
+        boolean isAdmin = "ADMIN".equals(auth.getRole());
+        boolean isOwner = "OWNER_EVENT".equals(auth.getRole())
+                && event.getOwnerUserId() != null
+                && event.getOwnerUserId().equals(auth.getUserId());
         return isAdmin || isOwner;
     }
     private boolean isClient(ValidateResponse auth) {
@@ -110,6 +115,7 @@ public class PackageController {
         if (canManage(event, auth)) {
             response.add(Link.of(packagePath).withRel("edit-package"));
             response.add(Link.of(packagePath).withRel("delete-package"));
+            response.add(Link.of(packagePath + "/tickets").withRel("tickets"));
         }
 
         if (isClient(auth)) {

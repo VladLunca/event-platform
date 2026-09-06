@@ -2,10 +2,11 @@ package com.example.event_service.controller;
 
 import com.example.event_service.dto.CreateUserRequest;
 import com.example.event_service.dto.LoginRequest;
+import com.example.event_service.dto.UpdateRoleRequest;
+import com.example.event_service.dto.ValidateResult;
 import com.example.event_service.exception.InvalidCredentialsException;
 import com.example.event_service.model.User;
 import com.example.event_service.service.AuthService;
-import com.example.event_service.service.JwtService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -19,11 +20,9 @@ import java.util.Map;
 public class AuthController {
 
     private final AuthService authService;
-    private final JwtService jwtService;
 
-    public AuthController(AuthService authService, JwtService jwtService) {
+    public AuthController(AuthService authService) {
         this.authService = authService;
-        this.jwtService = jwtService;
     }
 
     @PostMapping("/login")
@@ -53,22 +52,22 @@ public class AuthController {
                     .body(Map.of("error", e.getMessage()));
         }
     }
-    @PostMapping("/users")
-    public ResponseEntity<?> createUser(@RequestHeader("Authorization") String authHeader,
-                                        @RequestBody CreateUserRequest request) {
+    @PatchMapping("/users/role")
+    public ResponseEntity<?> updateUserRole(@RequestHeader("Authorization") String authHeader,
+                                        @RequestBody UpdateRoleRequest request) {
         String token = authHeader.replace("Bearer ", "");
 
-        if (!jwtService.isValid(token) || !"ADMIN".equals(jwtService.getRole(token))) {
+        ValidateResult result = authService.validate(token);
+        if (!result.valid() || !"ADMIN".equals(result.role())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "Acces interzis"));
         }
 
         try {
-            authService.createUser(request.getEmail(), request.getPassword(), request.getRole());
-            return ResponseEntity.status(HttpStatus.CREATED)
-                    .body(Map.of("message", "User creat cu succes"));
+            authService.updateUserRole(request.getEmail(), request.getRole());
+            return ResponseEntity.ok(Map.of("message", "Rol actualizat cu succes"));
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT)
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(Map.of("error", e.getMessage()));
         }
     }

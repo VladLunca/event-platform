@@ -69,7 +69,7 @@ export class ProfileComponent implements OnInit {
       const ticketResource = {
         ticketResponseId: id,
         _links: {
-          self: { href: `/tickets/${id}` }
+          self: { href: `/events/tickets/${id}` }
         }
       } as unknown as Ticket;
 

@@ -1,5 +1,5 @@
 <div class="container">
-  <h1>Creaza utilizator</h1>
+  <h1>Modifica rolul unui utilizator</h1>
 
   @if (success()) {
     <p class="success">{{ success() }}</p>
@@ -11,7 +11,7 @@
 
   <form [formGroup]="form" (ngSubmit)="submit()">
     <div class="field">
-      <label for="email">Email</label>
+      <label for="email">Email utilizator existent</label>
       <input id="email" type="email" formControlName="email" />
       @if (form.get('email')?.invalid && form.get('email')?.touched) {
         <span class="validation">Email invalid</span>
@@ -19,15 +19,7 @@
     </div>
 
     <div class="field">
-      <label for="password">Parola</label>
-      <input id="password" type="password" formControlName="password" />
-      @if (form.get('password')?.invalid && form.get('password')?.touched) {
-        <span class="validation">Minim 6 caractere</span>
-      }
-    </div>
-
-    <div class="field">
-      <label for="role">Rol</label>
+      <label for="role">Rol nou</label>
       <select id="role" formControlName="role">
         @for (role of roles; track role) {
           <option [value]="role">{{ role }}</option>
@@ -36,7 +28,7 @@
     </div>
 
     <button type="submit" [disabled]="form.invalid || loading()">
-      {{ loading() ? 'Se creeaza...' : 'Creaza utilizator' }}
+      {{ loading() ? 'Se actualizeaza...' : 'Actualizeaza rol' }}
     </button>
   </form>
 </div>

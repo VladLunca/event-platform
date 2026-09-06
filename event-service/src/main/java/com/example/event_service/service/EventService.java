@@ -30,7 +30,10 @@ public class EventService {
         return eventRepository.findById(id).orElseThrow(() -> new NotFoundException("Evenimentul nu a fost gasit"));
     }
 
-    public void checkOwnership(Long eventId, String userId) {
+    public void checkOwnership(Long eventId, String userId, String role) {
+        if ("ADMIN".equals(role)) {
+            return;
+        }
         if (!eventRepository.existsByEventIdAndOwnerUserId(eventId, userId)) {
             throw new ForbiddenException("Nu detineti acest eveniment");
         }
@@ -47,8 +50,8 @@ public class EventService {
     }
 
     @Transactional
-    public Event updateEvent(Long id, CreateEventRequest request, String userId) {
-        checkOwnership(id, userId);
+    public Event updateEvent(Long id, CreateEventRequest request, String userId, String role) {
+        checkOwnership(id, userId, role);
         Event event = getEvent(id);
         event.setName(request.getName());
         event.setDescription(request.getDescription());
@@ -57,8 +60,8 @@ public class EventService {
     }
 
     @Transactional
-    public void deleteEvent(Long id, String userId) {
-        checkOwnership(id, userId);
+    public void deleteEvent(Long id, String userId, String role) {
+        checkOwnership(id, userId, role);
         eventRepository.delete(getEvent(id));
     }
 

@@ -7,6 +7,7 @@ import { forkJoin } from 'rxjs';
 import { EventService } from '../../../core/services/event.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { ClientService } from '../../../core/services/client.service';
+import { HateoasService } from '../../../core/services/hateoas.service';
 import { EventModel, EventPackage, Ticket } from '../../../core/models/event.model';
 
 interface PackageDraft {
@@ -46,6 +47,7 @@ export class EventDetailComponent implements OnInit {
     private router: Router,
     private eventService: EventService,
     private clientService: ClientService,
+    private hateoas: HateoasService,
     public authService: AuthService
   ) {}
 
@@ -77,8 +79,12 @@ export class EventDetailComponent implements OnInit {
       });
   }
 
-  isOwner(): boolean {
-    return this.authService.hasRole('OWNER_EVENT') || this.authService.hasRole('ADMIN');
+  canManageEvent(event: EventModel): boolean {
+    return this.hateoas.has(event, 'edit');
+  }
+
+  canManagePackage(pkg: EventPackage): boolean {
+    return this.hateoas.has(pkg, 'delete-package');
   }
 
   deleteEvent(): void {

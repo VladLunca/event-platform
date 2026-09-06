@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
 import { EventModel, EventPackage, Ticket, TicketDetail } from '../models/event.model';
 import { HateoasService } from './hateoas.service';
 
@@ -25,7 +26,9 @@ export class EventService {
       .set('page', page)
       .set('size', size);
     if (name) params = params.set('name', name);
-    return this.http.get<EventModel[]>(this.apiUrl, { params });
+    return this.http.get<EventModel[]>(this.apiUrl, { params }).pipe(
+      map(body => this.hateoas.unwrapCollection<EventModel>(body))
+    );
   }
 
   getEvent(id: number): Observable<EventModel> {
@@ -61,7 +64,7 @@ export class EventService {
   deletePackage(packageResource: EventPackage): Observable<void> {
     return this.hateoas.followWrite<void>(
       packageResource,
-      'delete',
+      'delete-package',
       'DELETE'
     );
   }

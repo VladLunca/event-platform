@@ -34,7 +34,7 @@ A microservices-based platform for managing artistic events, ticket packages, an
 
 **Client Profiles**: Clients maintain a personal profile stored in MongoDB with optional public information and social media links. The profile page displays each registered ticket enriched with the event name, package name, and seat count — resolved live from the event-service. The client-service validates ticket ownership via a chain call to the event-service before persisting any UUID.
 
-**Account Administration**: A self-registration page at `/register` allows anyone to create a `CLIENT` or `OWNER_EVENT` account. The `ADMIN` role can additionally create accounts with any role including `ADMIN`. Admins do not interact with event or client data.
+**Account Administration**: Anyone can self-register a `CLIENT` account from the profile page (`/profile`) — no dedicated registration page exists. The `ADMIN` role manages access levels from `/manage-user`: instead of creating accounts from scratch, an admin looks up an existing user by email and changes their role between `CLIENT` and `OWNER_EVENT`. Admins also have unrestricted CRUD access to all events, packages, and user roles, but do not interact with client profile data.
 
 ---
 
@@ -165,8 +165,8 @@ erDiagram
 
 | Role | Capabilities |
 |------|-------------|
-| `ADMIN` | Create user accounts with any role |
-| `OWNER_EVENT` | Full CRUD on own events and packages; read-only on all events |
+| `ADMIN` | Change any user's role (`CLIENT` ↔ `OWNER_EVENT`); full CRUD on all events and packages regardless of owner |
+| `OWNER_EVENT` | Full CRUD on own events and packages; read-only on events owned by others |
 | `CLIENT` | Purchase tickets; view events and packages; manage own profile |
 
 ### Authorization Flow
@@ -189,7 +189,7 @@ gRPC Validate(token) → auth-service
                   └── authorized → process request
 ```
 
-Read endpoints for events and packages (`GET /events`, `GET /events/{id}`, `GET /events/{id}/packages`, `GET /events/{id}/packages/{packageId}`) are **public** — no token required. The `/register` page (account creation) is also publicly accessible; the backend enforces role restrictions on what roles a caller can assign.
+Read endpoints for events and packages (`GET /events`, `GET /events/{id}`, `GET /events/{id}/packages`, `GET /events/{id}/packages/{packageId}`) are **public** — no token required. Self-registration (from the `/profile` page) is also publicly accessible and always creates a `CLIENT` account; promoting a user to `OWNER_EVENT` requires an `ADMIN` to change their role from `/manage-user`.
 
 ---
 
@@ -259,7 +259,8 @@ Base path: `/auth` · External: `/api/auth/` · Port: `8080` (internal), `8090` 
 |--------|------|------|--------|-------------|
 | `POST` | `/auth/login` | Public | 200, 401 | Authenticate, receive JWT |
 | `POST` | `/auth/logout` | Bearer | 200 | Invalidate token (add to blacklist) |
-| `POST` | `/auth/users` | ADMIN | 201, 403, 409 | Create new user account |
+| `POST` | `/auth/register` | Public | 201, 409 | Self-register a `CLIENT` account, receive JWT |
+| `PATCH` | `/auth/users/role` | ADMIN | 200, 400, 403 | Change an existing user's role |
 
 ### POST `/auth/login`
 
@@ -285,20 +286,38 @@ Authorization: Bearer <token>
 { "success": true }
 ```
 
-### POST `/auth/users`
+### POST `/auth/register`
 
 ```json
-// Request (ADMIN token required)
-{ "email": "client@platform.com", "password": "pass123", "role": "CLIENT" }
+// Request
+{ "email": "client@platform.com", "password": "pass123" }
 
 // 201
-{ "message": "User creat cu succes" }
+{ "token": "eyJhbGciOiJIUzI1NiJ9..." }
 
 // 409
 { "error": "Email deja existent" }
 ```
 
-Valid roles: `ADMIN`, `OWNER_EVENT`, `CLIENT`
+The new account is always created with role `CLIENT`. There is no public endpoint to self-register as `OWNER_EVENT` or `ADMIN` — an admin must promote the account afterwards via `PATCH /auth/users/role`.
+
+### PATCH `/auth/users/role`
+
+```json
+// Request (ADMIN token required)
+{ "email": "client@platform.com", "role": "OWNER_EVENT" }
+
+// 200
+{ "message": "Rol actualizat cu succes" }
+
+// 400
+{ "error": "Utilizator inexistent" }
+
+// 403
+{ "error": "Acces interzis" }
+```
+
+Assignable roles from the admin UI: `OWNER_EVENT`, `CLIENT`. The endpoint itself accepts any value of the `Role` enum (`ADMIN`, `OWNER_EVENT`, `CLIENT`), but the frontend only exposes the two non-admin roles to avoid accidental admin escalation through the UI.
 
 ---
 
@@ -307,6 +326,20 @@ Valid roles: `ADMIN`, `OWNER_EVENT`, `CLIENT`
 Base path: `/events` · External: `/api/events` · Port: `8080`
 
 All responses include HATEOAS `_links`. `GET` endpoints are public. Write endpoints require `Authorization: Bearer <token>`.
+
+List endpoints (`GET /events`, `GET /events/{eventId}/packages`, `GET /events/{eventId}/packages/{packageId}/tickets`) return a HAL collection instead of a bare array, so the individual items keep their own `_links`:
+
+```json
+{
+  "_embedded": {
+    "events": [
+      { "eventResponseId": 1, "name": "Concert Iași", "_links": { "self": { "href": "/events/1" } } }
+    ]
+  }
+}
+```
+
+The Angular `HateoasService.unwrapCollection()` transparently extracts the array from `_embedded` (or passes a bare array through), so consumers of `EventService` still work with plain `T[]`.
 
 ### Events
 
@@ -653,11 +686,12 @@ event-platform/
 │       │   ├── interceptors/ auth.interceptor.ts
 │       │   ├── models/       user.model.ts · event.model.ts · client.model.ts
 │       │   └── services/     auth.service.ts · event.service.ts · client.service.ts
+│       │                     hateoas.service.ts (follows `_links`, unwraps HAL `_embedded` collections)
 │       └── features/
 │           ├── auth/         login/
 │           ├── events/       event-list/ · event-detail/ · create-event/ · edit-event/
-│           ├── admin/        create-user/   (route: /register — public)
-│           └── profile/      profile.component (ts · html · scss)
+│           ├── admin/        manage-user/update-role.component   (route: /manage-user — ADMIN only)
+│           └── profile/      profile.component (ts · html · scss) — also handles self-registration
 │
 ├── nginx/
 │   └── nginx.conf

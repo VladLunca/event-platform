@@ -12,6 +12,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.hateoas.CollectionModel;
 import org.springframework.hateoas.EntityModel;
 import org.springframework.hateoas.Link;
 import org.springframework.http.HttpStatus;
@@ -34,7 +35,7 @@ public class EventController {
     }
 
     @GetMapping
-    public ResponseEntity<List<EntityModel<EventResponse>>> listEvents(
+    public ResponseEntity<CollectionModel<EntityModel<EventResponse>>> listEvents(
             @RequestParam(required = false) String name,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
@@ -49,7 +50,7 @@ public class EventController {
                 .map(event -> toModel(event, auth))
                 .toList();
 
-        return ResponseEntity.ok(models);
+        return ResponseEntity.ok(CollectionModel.of(models));
     }
 
     @GetMapping("/{id}")
@@ -78,7 +79,7 @@ public class EventController {
             @Valid @RequestBody CreateEventRequest request) {
 
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "OWNER_EVENT", "ADMIN");
-        Event updated = eventService.updateEvent(id, request, auth.getUserId());
+        Event updated = eventService.updateEvent(id, request, auth.getUserId(), auth.getRole());
         return ResponseEntity.ok(toModel(updated, auth));
     }
 
@@ -88,7 +89,7 @@ public class EventController {
             @RequestHeader("Authorization") String authHeader) {
 
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "OWNER_EVENT", "ADMIN");
-        eventService.deleteEvent(id, auth.getUserId());
+        eventService.deleteEvent(id, auth.getUserId(), auth.getRole());
         return ResponseEntity.noContent().build();
     }
 

@@ -6,6 +6,7 @@ import com.example.event_service.model.Ticket;
 import com.example.event_service.service.TicketService;
 import com.example.event_service.service.TokenValidationService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.hateoas.CollectionModel;
 import org.springframework.hateoas.EntityModel;
 import org.springframework.hateoas.Link;
 import org.springframework.http.HttpStatus;
@@ -28,7 +29,7 @@ public class TicketController {
     }
 
     @GetMapping
-    public ResponseEntity<List<EntityModel<TicketResponse>>> listTickets(@PathVariable Long eventId, @PathVariable Long packageId, @RequestHeader("Authorization") String authHeader) {
+    public ResponseEntity<CollectionModel<EntityModel<TicketResponse>>> listTickets(@PathVariable Long eventId, @PathVariable Long packageId, @RequestHeader("Authorization") String authHeader) {
 
         ValidateResponse auth = tokenValidationService.requireAuth(authHeader);
         List<EntityModel<TicketResponse>> models = ticketService
@@ -36,7 +37,7 @@ public class TicketController {
                 .stream()
                 .map(t -> toModel(eventId, packageId, t))
                 .toList();
-        return ResponseEntity.ok(models);
+        return ResponseEntity.ok(CollectionModel.of(models));
     }
 
     @PostMapping

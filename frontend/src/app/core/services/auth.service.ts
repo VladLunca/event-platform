@@ -94,7 +94,7 @@ export class AuthService {
       issuedAt: raw.iat
     };
   }
-  createUser(data: { email: string; password: string; role: string }): Observable<unknown> {
-    return this.http.post(`${this.apiUrl}/users`, data);
+  updateUserRole(data: { email: string; role: string }): Observable<unknown> {
+    return this.http.patch(`${this.apiUrl}/users/role`, data);
   }
 }

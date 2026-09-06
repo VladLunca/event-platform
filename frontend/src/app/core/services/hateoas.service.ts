@@ -1,9 +1,14 @@
 import {Observable, throwError} from 'rxjs';
+import {map} from 'rxjs/operators';
 import {HttpClient} from '@angular/common/http';
 import {Injectable} from '@angular/core';
 
 export interface HateoasResource {
   _links: Record<string, { href: string }>;
+}
+
+interface HalCollection {
+  _embedded?: Record<string, unknown>;
 }
 
 type WriteMethod = 'POST' | 'PUT' | 'DELETE' | 'PATCH';
@@ -15,6 +20,17 @@ export class HateoasService {
 
   has(resource: HateoasResource, rel: string): boolean {
     return !!resource._links?.[rel];
+  }
+
+  // HAL serializeaza colectiile ca { _embedded: { <rel>: [...] } } in loc de un array simplu
+  unwrapCollection<T>(body: T[] | HalCollection): T[] {
+    if (Array.isArray(body)) {
+      return body;
+    }
+    const embedded = body?._embedded;
+    if (!embedded) return [];
+    const values = Object.values(embedded);
+    return (values[0] as T[]) ?? [];
   }
 
   follow<T>(
@@ -29,7 +45,11 @@ export class HateoasService {
       );
     }
 
-    return this.http.get<T>(`/api${href}`);
+    return this.http.get<T | HalCollection>(`/api${href}`).pipe(
+      map(body => (Array.isArray(body) || (body as HalCollection)?._embedded
+        ? this.unwrapCollection(body as T[] | HalCollection)
+        : body) as T)
+    );
   }
 
   followWrite<T>(

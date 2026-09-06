@@ -13,7 +13,7 @@
     <div class="event-header">
       <div class="event-title-row">
         <h1>{{ ev.name }}</h1>
-        @if (isOwner()) {
+        @if (canManageEvent(ev)) {
           <div class="owner-actions">
             <a [routerLink]="['/events', ev.eventResponseId, 'edit']" class="btn-edit">Editeaza</a>
             <button (click)="deleteEvent()" class="btn-delete">Sterge eveniment</button>
@@ -30,7 +30,7 @@
 
     <div class="section-header">
       <h2>Pachete</h2>
-      @if (isOwner()) {
+      @if (canManageEvent(ev)) {
         <button (click)="togglePackageForm()" class="btn-secondary">
           {{ showPackageForm() ? 'Anuleaza' : '+ Pachete noi' }}
         </button>
@@ -111,7 +111,7 @@
         <div class="package-card">
           <div class="pkg-header">
             <h3>{{ pkg.name }}</h3>
-            @if (isOwner()) {
+            @if (canManagePackage(pkg)) {
               <button (click)="deletePackage(pkg)" class="btn-delete-sm">Sterge</button>
             }
           </div>
@@ -134,7 +134,7 @@
             </button>
           }
 
-          @if (isOwner()) {
+          @if (canManagePackage(pkg)) {
             <button (click)="toggleTickets(pkg)" class="btn-tickets">
               {{ isPackageExpanded(pkg.packageResponseId) ? 'Ascunde bilete' : 'Vezi bilete' }}
             </button>
