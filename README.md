@@ -50,6 +50,7 @@ flowchart TD
     AuthDB[("auth-db\nMySQL")]
     EventDB[("event-db\nMySQL")]
     ClientDB[("client-db\nMongoDB")]
+    TokenStore[("token-store\nRedis")]
 
     Browser -->|HTTP + JSON| Nginx
     Nginx -->|/api/auth/| Auth
@@ -59,6 +60,7 @@ flowchart TD
     Client -->|gRPC Validate| Auth
     Client -->|REST chain call| Event
     Auth --- AuthDB
+    Auth --- TokenStore
     Event --- EventDB
     Client --- ClientDB
 ```
@@ -67,7 +69,7 @@ flowchart TD
 
 | Service | Role | Stack | Port |
 |---------|------|-------|------|
-| auth-service | Identity management — JWT issuance, validation, blacklist | Spring Boot, MySQL, gRPC | REST :8080, gRPC :9090 |
+| auth-service | Identity management — JWT issuance, validation, blacklist | Spring Boot, MySQL, Redis, gRPC | REST :8080, gRPC :9090 |
 | event-service | Events, packages, tickets | Spring Boot, MySQL, Spring HATEOAS | REST :8080 |
 | client-service | Client profiles and ticket history | Spring Boot, MongoDB | REST :8081 |
 | frontend | Single Page Application | Angular 22, nginx | :80 (→ host :4200) |
@@ -221,7 +223,28 @@ The secret key is configured via `JWT_SECRET` as a 64-character hex string (256-
 
 ### Token Blacklist
 
-On logout, the raw token string is added to an in-memory `ConcurrentHashSet` in auth-service. Every `Validate` gRPC call checks the blacklist before verifying the signature. Blacklisted tokens remain invalid until auth-service restarts.
+A JWT is self-contained: any service holding the secret can verify it offline, which is what makes stateless validation cheap. The flip side is that nothing can *un-issue* a token — it stays valid until its `exp` passes. Logout therefore needs a small piece of shared state recording which not-yet-expired tokens have been revoked.
+
+On logout, auth-service writes that record to Redis (`token-store`):
+
+```java
+long ttl = jwtService.getExpiration(token) - System.currentTimeMillis();
+redis.opsForValue().set("bl:" + sha256(token), "1", Duration.ofMillis(ttl));
+```
+
+Every `Validate` gRPC call checks the key before verifying the signature. Three properties follow from the design, and each one is the reason for a specific choice:
+
+**TTL equal to the token's remaining lifetime.** A revoked token only needs to be remembered until the moment it would have expired on its own — after that, signature verification rejects it anyway and the blacklist entry is dead weight. Letting Redis expire the key makes the store self-limiting: it holds at most the tokens revoked within one `jwt.expiration-ms` window, never grows monotonically, and needs no cleanup job, no `@Scheduled` sweep, and no eviction policy.
+
+**External to the JVM, not a field on a bean.** This is the property that actually matters here. An in-process `Set` would fail open in two ways that only appear in the deployment this project is built around: a logged-out but not-yet-expired token becomes valid again the moment auth-service restarts, and a logout served by one replica is invisible to every other replica. Both are silent — nothing errors, the token is simply accepted again. Redis is shared by all instances and survives restarts, so revocation is a property of the system rather than of one process's heap.
+
+**Key is a SHA-256 hash, not the token.** Bearer tokens are credentials; hashing keeps them out of the store in plaintext, and gives fixed-length keys instead of ~250 variable bytes. The lookup is still an exact match, so nothing is lost.
+
+Expiry itself is *not* handled here — `JwtService.isValid()` checks it independently when parsing the signature. The blacklist covers only the window between an explicit logout and natural expiry; the two mechanisms are deliberately separate.
+
+The trade-off is that auth-service now depends on Redis being reachable: if `token-store` is down, `validate` fails rather than silently degrading. That is intentional — the two possible fallbacks are "treat as not blacklisted", which reintroduces exactly the fail-open behaviour above, and "treat as blacklisted", which logs out every user.
+
+The second cost is that validation is no longer a purely local operation: every validated request now pays one Redis round-trip, which is the property JWTs are normally chosen to avoid. That is the price of a 24-hour token lifetime — with short-lived access tokens (5–15 min) plus refresh tokens, revocation would be handled when a token is refreshed and the per-request lookup could be dropped entirely. That is the natural next step; it is not implemented here.
 
 ---
 
@@ -546,7 +569,7 @@ The chain call to `GET /events/tickets/{ticketId}` is made synchronously before 
 
 **No cross-database foreign keys**: `owner_user_id` in `events` and `tickets` stores the JWT `sub` as a plain string. The auth-service, event-service, and client-service each have their own isolated database. Referential integrity between services is enforced by application logic (ownership checks), not by database constraints.
 
-**JWT claims over session state**: Every protected request carries all necessary identity information (`userId`, `role`) inside the JWT. Services do not maintain sessions — the token is the only source of truth per request. This makes all backend services stateless and independently scalable.
+**JWT claims over session state**: Every protected request carries all necessary identity information (`userId`, `role`) inside the JWT. Services do not maintain sessions — the token is the only source of truth per request, so any replica can serve any request and the services scale independently. The blacklist does not contradict this: it is *shared* state, not *per-client session* state. No instance remembers anything about a caller between requests; it consults a store every instance can see, exactly as it consults MySQL. What the blacklist actually costs is lookup-free validation, not statelessness — see [Token Blacklist](#token-blacklist).
 
 **gRPC for token validation**: event-service and client-service validate tokens via gRPC instead of REST to reduce per-request overhead (HTTP/2 multiplexing, binary Protobuf encoding, persistent connection).
 
@@ -554,7 +577,7 @@ The chain call to `GET /events/tickets/{ticketId}` is made synchronously before 
 
 **HATEOAS on event-service responses**: All event, package, and ticket responses include `_links`. This allows the frontend to discover related resources (e.g., navigate from an event to its packages list) without hard-coding URL structures.
 
-**In-memory token blacklist**: The blacklist is a `ConcurrentHashSet` in auth-service heap. It provides immediate logout invalidation without a database round-trip, at the cost of being cleared on service restart. A persistent blacklist (e.g., Redis with TTL) would survive restarts but adds infrastructure complexity; the current tradeoff is acceptable for a single-node deployment.
+**Redis-backed token blacklist with TTL**: Logout is the one operation a stateless JWT cannot express on its own, so it needs shared state — kept in Redis rather than in the auth-service heap, with a TTL equal to the token's remaining lifetime so entries expire on their own. An in-process set would fail open under exactly the deployment this project targets: revocations lost on restart, and invisible to other replicas. See [Token Blacklist](#token-blacklist) for the full reasoning.
 
 **`availableSeats` computed at query time**: Available seat count is never stored — it is calculated as `seatCount − COUNT(tickets)` per request. This avoids double-update consistency issues (updating both a counter and inserting a row) at the cost of a count query per package read.
 
@@ -725,6 +748,7 @@ cp .env.example .env
 | `CLIENT_DB_USER` | `client_user` | MongoDB username |
 | `CLIENT_DB_PASSWORD` | — | MongoDB password |
 | `CLIENT_DB_PORT` | `27017` | Host port for client-db |
+| `REDIS_PORT` | `6379` | Host port for token-store (Redis) |
 | `JWT_SECRET` | — | 64-character hex string (256-bit HS256 key) — generate with `openssl rand -hex 32` |
 | `JWT_EXPIRATION_MS` | `86400000` | Token validity in ms (default 24 h) |
 | `ADMIN_EMAIL` | `admin@platform.com` | Email of the seeded admin account |
@@ -780,6 +804,7 @@ docker compose down -v       # wipe all data volumes
 | Auth DB | `localhost:3306` | MySQL |
 | Event DB | `localhost:3307` | MySQL |
 | Client DB | `localhost:27017` | MongoDB |
+| Token store | `localhost:6379` | Redis — logout blacklist |
 
 ---
 
@@ -795,7 +820,7 @@ docker compose down -v       # wipe all data volumes
 
 ```bash
 # 1. Start databases
-docker compose up auth-db event-db client-db -d
+docker compose up auth-db event-db client-db token-store -d
 
 # 2. Run auth-service  (REST :8080, gRPC :9090)
 cd auth-service && mvn spring-boot:run

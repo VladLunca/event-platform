@@ -36,6 +36,14 @@ public class JwtService {
         }
     }
 
+    public long getExpiration(String token) {
+        try {
+            return parseClaims(token).getExpiration().getTime();
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
+
     public String getUserId(String token) {
         return parseClaims(token).getSubject();
     }

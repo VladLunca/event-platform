@@ -56,6 +56,22 @@ services:
     networks:
       - event-platform-net
 
+  token-store:
+    image: redis:7.4-alpine
+    container_name: token-store
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - token-store-data:/data
+    networks:
+      - event-platform-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # ── Services ──────────────────────────────────────────────────
 
   auth-service:
@@ -68,6 +84,8 @@ services:
       DB_NAME: ${AUTH_DB_NAME}
       DB_USER: ${AUTH_DB_USER}
       DB_PASSWORD: ${AUTH_DB_PASSWORD}
+      REDIS_HOST: token-store
+      REDIS_PORT: 6379
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
@@ -78,6 +96,8 @@ services:
       - "9090:9090"
     depends_on:
       auth-db:
+        condition: service_healthy
+      token-store:
         condition: service_healthy
     networks:
       - event-platform-net
@@ -152,3 +172,4 @@ volumes:
   auth-db-data:
   event-db-data:
   client-db-data:
+  token-store-data:
