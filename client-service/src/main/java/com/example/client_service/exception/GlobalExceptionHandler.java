@@ -1,5 +1,6 @@
 package com.example.client_service.exception;
 
+import io.grpc.StatusRuntimeException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -28,5 +29,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<?> handleConflict(IllegalStateException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", ex.getMessage()));
+    }
+
+    /**
+     * Raised when the gRPC call to auth-service fails or exceeds its deadline. The request
+     * could not be authorized because a dependency is down, which is a 503 — not a 500,
+     * and not a 401, since nothing is wrong with the caller's token.
+     */
+    @ExceptionHandler(StatusRuntimeException.class)
+    public ResponseEntity<?> handleAuthServiceUnavailable(StatusRuntimeException ex) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("error", "Serviciul de autentificare nu este disponibil"));
     }
 }

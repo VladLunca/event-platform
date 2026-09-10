@@ -7,6 +7,7 @@ import com.example.event_service.exception.NotFoundException;
 import com.example.event_service.exception.UnauthorizedException;
 import com.example.event_service.service.TicketService;
 import com.example.event_service.service.TokenValidationService;
+import io.grpc.Status;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -111,6 +112,16 @@ TicketLookupControllerTest {
                 .andExpect(status().isOk());
 
         verify(ticketService).getTicketDetail(eq(TICKET_ID), eq("owner-1"), eq("OWNER_EVENT"));
+    }
+
+    @Test
+    void authServiceFailureIsServiceUnavailableNotInternalError() throws Exception {
+        when(tokenValidationService.requireAuth(anyString()))
+                .thenThrow(Status.DEADLINE_EXCEEDED.asRuntimeException());
+
+        mockMvc.perform(get("/events/tickets/{id}", TICKET_ID)
+                        .header("Authorization", "Bearer ok"))
+                .andExpect(status().isServiceUnavailable());
     }
 
     @Test
