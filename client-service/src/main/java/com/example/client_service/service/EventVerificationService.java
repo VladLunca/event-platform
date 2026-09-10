@@ -4,21 +4,42 @@ import com.example.client_service.exception.ForbiddenException;
 import com.example.client_service.exception.NotFoundException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.Map;
 
 @Service
 public class EventVerificationService {
 
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
+    private static final Duration READ_TIMEOUT = Duration.ofSeconds(5);
+
     private final RestClient restClient;
 
     public EventVerificationService(@Value("${EVENT_SERVICE_URL:http://event-service:8080}") String eventServiceUrl) {
         this.restClient = RestClient.builder()
+                .requestFactory(timeoutBoundRequestFactory())
                 .baseUrl(eventServiceUrl)
                 .build();
+    }
+
+    /**
+     * Without explicit timeouts the call blocks forever when the event-service is
+     * unreachable without refusing the connection (paused container, dropped packets),
+     * and the "service unavailable" branch below is never reached because no exception
+     * is ever raised. Both timeouts surface as an exception, which maps to 409.
+     */
+    private static ClientHttpRequestFactory timeoutBoundRequestFactory() {
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(
+                HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build());
+        factory.setReadTimeout(READ_TIMEOUT);
+        return factory;
     }
 
     public void verifyTicketOwnership(String ticketId, String userId, String authHeader) {

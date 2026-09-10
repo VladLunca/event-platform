@@ -82,7 +82,7 @@ flowchart TD
 | `/api/events` | `http://event-service:8080/events` | Prefix match, no trailing slash |
 | `/api/clients/` | `http://client-service:8081/clients/` | Trailing slash preserved |
 
-The `GET /events/tickets/{ticketId}` endpoint is reachable both within the Docker network (used by client-service for chain validation) and externally via `/api/events/tickets/{ticketId}` (used by the Angular frontend to enrich ticket display in the profile page), because the `location /api/events` prefix rule in nginx matches all paths under that prefix.
+The `GET /events/tickets/{ticketId}` endpoint is reachable both within the Docker network (used by client-service for chain validation) and externally via `/api/events/tickets/{ticketId}` (used by the Angular frontend to enrich ticket display in the profile page), because the `location /api/events` prefix rule in nginx matches all paths under that prefix. Since it is externally reachable, it requires a valid token like every other ticket endpoint — see [Ticket detail lookup](#ticket-detail-response--get-eventsticketsticketid).
 
 ---
 
@@ -98,7 +98,7 @@ sequenceDiagram
     A->>ES: POST /api/events/{id}/packages/{pkgId}/tickets
     ES->>AS: gRPC Validate(token)
     AS-->>ES: valid=true, userId, role=CLIENT
-    ES->>ES: check availableSeats > 0
+    ES->>ES: lock package row, then check availableSeats > 0
     ES-->>A: 201 { ticketResponseId: "uuid-..." }
 
     Note over A: automatically registers ticket in profile
@@ -106,7 +106,9 @@ sequenceDiagram
     A->>CS: POST /api/clients/{email}/tickets { ticketId: "uuid-..." }
     CS->>AS: gRPC Validate(token)
     AS-->>CS: valid=true, userId, role=CLIENT
-    CS->>ES: GET /events/tickets/{ticketId}
+    CS->>ES: GET /events/tickets/{ticketId} (forwards caller's Bearer token)
+    ES->>AS: gRPC Validate(token)
+    AS-->>ES: valid=true, userId, role=CLIENT
     ES-->>CS: 200 { ticketId, ownerUserId, eventName, packageName, seatCount, ... }
     CS->>CS: verify ownerUserId == userId
     CS->>CS: append ticketId to client.tickets[]
@@ -118,7 +120,7 @@ sequenceDiagram
     ES-->>A: 200 { ticketId, eventName, packageName, seatCount }
 ```
 
-The chain call from client-service to event-service ensures the ticket UUID exists and belongs to the authenticated user before it is stored in MongoDB. The same `GET /events/tickets/{ticketId}` endpoint is also called by the Angular frontend to display human-readable ticket info (event name, package name, seat count) in the profile page.
+The chain call from client-service to event-service ensures the ticket UUID exists and belongs to the authenticated user before it is stored in MongoDB. The caller's `Authorization` header is forwarded on that call, so the event-service applies its own role check as well — a client can only resolve a ticket that is theirs. The same `GET /events/tickets/{ticketId}` endpoint is called by the Angular frontend to display human-readable ticket info (event name, package name, seat count) in the profile page; the Angular HTTP interceptor attaches the token automatically.
 
 ---
 
@@ -192,6 +194,8 @@ gRPC Validate(token) → auth-service
 ```
 
 Read endpoints for events and packages (`GET /events`, `GET /events/{id}`, `GET /events/{id}/packages`, `GET /events/{id}/packages/{packageId}`) are **public** — no token required. Self-registration (from the `/profile` page) is also publicly accessible and always creates a `CLIENT` account; promoting a user to `OWNER_EVENT` requires an `ADMIN` to change their role from `/manage-user`.
+
+That list is exhaustive: **every ticket endpoint requires a token**, including `GET /events/tickets/{ticketId}`, which is reachable from outside the Docker network through the nginx `/api/events` prefix. Ticket responses carry `ownerUserId`, so treating any of them as public would leak which account holds a given ticket to anyone who knows its UUID.
 
 ---
 
@@ -458,7 +462,7 @@ Results are sorted alphabetically by name.
 | `GET` | `/events/{eventId}/packages/{packageId}/tickets` | OWNER_EVENT (own) or ADMIN | 200, 401, 403, 404 | List all tickets for a package |
 | `POST` | `/events/{eventId}/packages/{packageId}/tickets` | CLIENT | 201, 401, 403, 404, 409 | Purchase a ticket |
 | `GET` | `/events/{eventId}/packages/{packageId}/tickets/{ticketId}` | CLIENT (own), OWNER_EVENT (own), or ADMIN | 200, 401, 403, 404 | Get ticket by ID (HATEOAS) |
-| `GET` | `/events/tickets/{ticketId}` | Public (internal + frontend) | 200, 404 | Ticket detail lookup — used by client-service chain call and Angular profile page |
+| `GET` | `/events/tickets/{ticketId}` | CLIENT (own), OWNER_EVENT (own event), or ADMIN | 200, 401, 403, 404 | Ticket detail lookup — used by client-service chain call and Angular profile page |
 
 #### Ticket response — `GET /events/{eventId}/packages/{packageId}/tickets/{ticketId}`
 
@@ -473,7 +477,7 @@ Results are sorted alphabetically by name.
 }
 ```
 
-`409 Conflict` is returned when all seats are sold. A CLIENT can view only their own ticket; an OWNER_EVENT can view any ticket for packages on their own event.
+`409 Conflict` is returned when all seats are sold. The purchase takes a write lock on the package row before counting sold seats, so two concurrent buyers competing for the last seat are serialized: one gets `201`, the other `409`. A CLIENT can view only their own ticket; an OWNER_EVENT can view any ticket for packages on their own event.
 
 #### Ticket detail response — `GET /events/tickets/{ticketId}`
 
@@ -489,7 +493,9 @@ Results are sorted alphabetically by name.
 }
 ```
 
-This endpoint resolves the ticket → package → event chain in a single call. It is used by client-service (reads `ownerUserId` for ownership verification) and by the Angular profile page (reads `eventName`, `packageName`, `seatCount` for display). No authentication is required.
+This endpoint resolves the ticket → package → event chain in a single call. It is used by client-service (reads `ownerUserId` for ownership verification) and by the Angular profile page (reads `eventName`, `packageName`, `seatCount` for display).
+
+A valid token is required and the same role rule as the HATEOAS ticket endpoint applies: an ADMIN resolves any ticket, a CLIENT only their own, an OWNER_EVENT only tickets belonging to packages on their own event. Anything else returns `403`. Both callers already carry a token — client-service forwards the caller's `Authorization` header on the chain call, and the Angular HTTP interceptor attaches it on the frontend.
 
 ---
 
@@ -561,7 +567,17 @@ All endpoints require `Authorization: Bearer <token>`.
 { "error": "Biletul nu a fost gasit sau nu va apartine" }
 ```
 
-The chain call to `GET /events/tickets/{ticketId}` is made synchronously before persisting the UUID. If the event-service returns 404, the client-service returns 404 to the caller. If `ownerUserId` in the event-service response does not match the authenticated user's ID, the client-service returns 403.
+The chain call to `GET /events/tickets/{ticketId}` is made synchronously before persisting the UUID, forwarding the caller's `Authorization` header. The outcome maps as follows:
+
+| Event-service response | Client-service returns |
+|------------------------|------------------------|
+| `200`, `ownerUserId` matches the caller | `200` — UUID persisted |
+| `200`, `ownerUserId` belongs to someone else | `403` |
+| `401` / `403` (event-service refused the lookup) | `403` |
+| `404` | `404` |
+| unreachable, timed out, or `5xx` | `409` — "Serviciul de evenimente nu este disponibil" |
+
+The chain call is bounded by a 2s connect timeout and a 5s read timeout. Without them an event-service that is unreachable *without refusing the connection* — a paused container, a host that silently drops packets — would block the client-service request thread indefinitely, and the "unavailable" branch would never be reached because no exception would ever be raised.
 
 ---
 
@@ -580,6 +596,8 @@ The chain call to `GET /events/tickets/{ticketId}` is made synchronously before 
 **Redis-backed token blacklist with TTL**: Logout is the one operation a stateless JWT cannot express on its own, so it needs shared state — kept in Redis rather than in the auth-service heap, with a TTL equal to the token's remaining lifetime so entries expire on their own. An in-process set would fail open under exactly the deployment this project targets: revocations lost on restart, and invisible to other replicas. See [Token Blacklist](#token-blacklist) for the full reasoning.
 
 **`availableSeats` computed at query time**: Available seat count is never stored — it is calculated as `seatCount − COUNT(tickets)` per request. This avoids double-update consistency issues (updating both a counter and inserting a row) at the cost of a count query per package read.
+
+**Pessimistic lock on purchase**: Because availability is derived from a `COUNT` rather than a stored counter, the read and the insert are two separate statements — and a plain transaction does not stop two concurrent buyers from both reading the same count and both inserting. `purchaseTicket` therefore loads the package through `EventPackageRepository.findByIdForUpdate` (`@Lock(PESSIMISTIC_WRITE)`, i.e. `SELECT ... FOR UPDATE`) *before* counting, which serializes buyers competing for the same package until the transaction commits. The alternative — a stored `sold_seats` counter updated with a conditional `UPDATE ... WHERE sold_seats < seat_count` — would avoid the lock but reintroduce the double-update problem the design decision above deliberately avoids.
 
 **Cascade delete via JPA**: Deleting an event cascades to its packages; deleting a package cascades to its tickets. The cascade is configured at the JPA level (`CascadeType.ALL`, `orphanRemoval = true`), not at the database constraint level.
 
