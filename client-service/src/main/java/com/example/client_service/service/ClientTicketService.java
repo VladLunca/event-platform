@@ -30,12 +30,12 @@ public class ClientTicketService {
         return client.getTickets();
     }
 
-    public List<String> addTicket(String email, String ticketId, String userId) {
+    public List<String> addTicket(String email, String ticketId, String userId, String authHeader) {
         Client client = clientRepository.findByEmail(email).orElseThrow(()->new NotFoundException("Profilul nu a fost gasit"));
         if (!client.getUserId().equals(userId)) {
             throw new ForbiddenException("Nu aveti permisiunea de a adauga bilete");
         }
-        eventVerificationService.verifyTicketOwnership(ticketId, userId);
+        eventVerificationService.verifyTicketOwnership(ticketId, userId, authHeader);
         if (!client.getTickets().contains(ticketId)) {
             client.getTickets().add(ticketId);
             clientRepository.save(client);

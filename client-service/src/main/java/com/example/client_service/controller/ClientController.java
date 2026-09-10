@@ -67,6 +67,6 @@ public class ClientController {
     @PostMapping("/{email:.+}/tickets")
     public ResponseEntity<List<String>> addTicket(@PathVariable String email, @RequestHeader("Authorization") String authHeader, @Valid @RequestBody AddTicketRequest request) {
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "CLIENT");
-        return ResponseEntity.ok(clientTicketService.addTicket(email, request.getTicketId(), auth.getUserId()));
+        return ResponseEntity.ok(clientTicketService.addTicket(email, request.getTicketId(), auth.getUserId(), authHeader));
     }
 }
