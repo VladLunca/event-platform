@@ -511,6 +511,7 @@ A valid token is required and the same role rule as the HATEOAS ticket endpoint 
 | `403` | Valid token but insufficient role or not the owner |
 | `404` | Resource not found |
 | `409` | Conflict — no seats available |
+| `503` | The gRPC call to auth-service failed or exceeded its 5s deadline — the request could not be authorized because a dependency is down, not because the token is bad |
 
 ---
 
