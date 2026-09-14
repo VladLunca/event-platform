@@ -36,10 +36,10 @@ public class ClientTicketService {
             throw new ForbiddenException("Nu aveti permisiunea de a adauga bilete");
         }
         eventVerificationService.verifyTicketOwnership(ticketId, userId, authHeader);
-        if (!client.getTickets().contains(ticketId)) {
-            client.getTickets().add(ticketId);
-            clientRepository.save(client);
-        }
-        return client.getTickets();
+        // Loading the profile, appending in memory and saving it back would drop a ticket
+        // added concurrently: each save writes the whole document as the caller read it.
+        return clientRepository.addTicket(email, ticketId)
+                .orElseThrow(() -> new NotFoundException("Profilul nu a fost gasit"))
+                .getTickets();
     }
 }

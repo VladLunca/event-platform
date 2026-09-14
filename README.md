@@ -1,5 +1,7 @@
 # Event Platform
 
+[![tests](https://github.com/VladLunca/event-platform/actions/workflows/tests.yml/badge.svg)](https://github.com/VladLunca/event-platform/actions/workflows/tests.yml)
+
 A microservices-based platform for managing artistic events, ticket packages, and client bookings.
 
 ---
@@ -17,6 +19,7 @@ A microservices-based platform for managing artistic events, ticket packages, an
 - [REST API — Event Service](#rest-api--event-service)
 - [REST API — Client Service](#rest-api--client-service)
 - [Key Design Decisions](#key-design-decisions)
+- [Testing](#testing)
 - [Database Schemas](#database-schemas)
 - [Project Structure](#project-structure)
 - [Environment Variables](#environment-variables)
@@ -75,6 +78,8 @@ flowchart TD
 | frontend | Single Page Application | Angular 22, nginx | :80 (→ host :4200) |
 
 ### nginx Proxy Rules
+
+nginx is not a separate compose service: the config lives in `frontend/nginx.conf` and is copied into the frontend image by `frontend/Dockerfile`, so the same container serves the built SPA on `:80` and proxies `/api/*` into the Docker network.
 
 | Location prefix | Proxied to | Notes |
 |-----------------|-----------|-------|
@@ -212,10 +217,13 @@ Tokens follow the **JWS** standard (RFC 7515/7519): `base64url(header).base64url
 
 | Claim | Type | Description |
 |-------|------|-------------|
+| `jti` | string | Random UUID, unique per issued token |
 | `sub` | string | User ID — numeric ID stored as string |
 | `role` | string | `ADMIN`, `OWNER_EVENT`, or `CLIENT` |
 | `iat` | number | Issued-at timestamp |
 | `exp` | number | Expiration timestamp (default: 24 h) |
+
+`jti` carries no meaning on its own — nothing reads it — but without it the token is a pure function of `sub`, `role` and the current second, so two logins of the same user inside one second produce byte-identical tokens. That collides with the blacklist below, which is keyed by token: logging out and immediately logging back in would hand the user a token that is already revoked, and the session would appear broken until the clock ticked over. The UUID makes every issued token a distinct key.
 
 ### Signature
 
@@ -578,6 +586,8 @@ The chain call to `GET /events/tickets/{ticketId}` is made synchronously before 
 | `404` | `404` |
 | unreachable, timed out, or `5xx` | `409` — "Serviciul de evenimente nu este disponibil" |
 
+The UUID is appended with an atomic `$addToSet`, so registering the same ticket twice is a no-op and two registrations racing on the same profile cannot overwrite each other — see [Key Design Decisions](#key-design-decisions).
+
 The chain call is bounded by a 2s connect timeout and a 5s read timeout. Without them an event-service that is unreachable *without refusing the connection* — a paused container, a host that silently drops packets — would block the client-service request thread indefinitely, and the "unavailable" branch would never be reached because no exception would ever be raised.
 
 ---
@@ -600,7 +610,70 @@ The chain call is bounded by a 2s connect timeout and a 5s read timeout. Without
 
 **Pessimistic lock on purchase**: Because availability is derived from a `COUNT` rather than a stored counter, the read and the insert are two separate statements — and a plain transaction does not stop two concurrent buyers from both reading the same count and both inserting. `purchaseTicket` therefore loads the package through `EventPackageRepository.findByIdForUpdate` (`@Lock(PESSIMISTIC_WRITE)`, i.e. `SELECT ... FOR UPDATE`) *before* counting, which serializes buyers competing for the same package until the transaction commits. The alternative — a stored `sold_seats` counter updated with a conditional `UPDATE ... WHERE sold_seats < seat_count` — would avoid the lock but reintroduce the double-update problem the design decision above deliberately avoids.
 
+**Atomic `$addToSet` instead of a lock on the client profile**: Registering a ticket appends a UUID to an array inside the client document. MongoDB offers no equivalent of the `SELECT ... FOR UPDATE` used on the package row — there is nothing to hold between a read and a write — but it does guarantee that a single-document update is atomic. Loading the profile, appending in memory and saving it back would therefore drop tickets: each save rewrites the whole document as that caller read it, so two registrations racing on the same profile leave only one. `ClientRepositoryImpl.addTicket` expresses the change as one server-side `$addToSet`, which is safe under concurrency and idempotent in the same stroke — the array gains the UUID only if it is not already there, so the duplicate check disappears as well.
+
 **Cascade delete via JPA**: Deleting an event cascades to its packages; deleting a package cascades to its tickets. The cascade is configured at the JPA level (`CascadeType.ALL`, `orphanRemoval = true`), not at the database constraint level.
+
+---
+
+## Testing
+
+The suites do not chase line coverage. They cover the places where a bug is **silent** — where the system keeps returning 200 while doing the wrong thing: authorization decisions, token revocation, seat accounting under concurrency, and the failure modes of one service calling another. CRUD paths that fail loudly when broken are deliberately left to manual testing.
+
+### What each suite locks down
+
+**auth-service** — 27 tests
+
+| Suite | Kind | What it protects |
+|-------|------|------------------|
+| `JwtServiceTest` | unit | A token is only accepted if the signature holds: foreign secret, `role` escalated from `CLIENT` to `ADMIN`, `sub` swapped to another user, `alg: none` with an empty signature, and expired-but-correctly-signed tokens are all rejected. Also pins `getExpiration() == 0` for unreadable tokens — the contract the blacklist TTL is derived from — and that two tokens issued in the same second differ. |
+| `AuthGrpcServiceTest` | in-process gRPC + Mockito | The wire contract: a valid token answers with `user_id`/`role`, a rejected one answers `valid=false` **with both fields empty**, rejection is a normal response rather than a gRPC error, and bad credentials map to `UNAUTHENTICATED` instead of a generic failure. |
+| `TokenBlacklistIntegrationTest` | Testcontainers (MySQL + Redis), full context over in-process gRPC | The logout story end to end: a revoked token stops validating immediately; the Redis key is `bl:` + SHA-256, never the token in clear text; its TTL matches the token's remaining lifetime; an already-expired token is not stored at all; logging in again right after logout yields a working token; and the revocation is visible through a second Redis connection standing in for another replica. |
+
+**event-service** — 22 tests
+
+| Suite | Kind | What it protects |
+|-------|------|------------------|
+| `TicketServiceTest` | unit | The ticket visibility matrix — admin sees any ticket, a client only its own, an event owner only tickets of its own events, unknown roles nothing — plus sold-out rejection and the fact that `purchaseTicket` loads the package *through the locking query*. |
+| `TicketLookupControllerTest` | `@WebMvcTest` | The HTTP boundary: a missing `Authorization` header never reaches the service, an invalid token is 401, a foreign ticket is 403, the identity used for the check comes from the token and not from the request, and an auth-service outage is 503 rather than 500. |
+| `TicketPurchaseConcurrencyTest` | Testcontainers (MySQL) | Seats are never oversold: two buyers racing for the last seat, ten buyers racing for three. The third test is a **control** — it runs the unsafe count-then-insert the code used before the pessimistic lock, against the same database and thread schedule, and requires it to oversell. If the control ever stopped overselling, the harness could not expose the race and the other two tests would be proving nothing. |
+
+**client-service** — 19 tests
+
+| Suite | Kind | What it protects |
+|-------|------|------------------|
+| `ClientTicketConcurrencyTest` | Testcontainers (MongoDB) | Ten tickets registered concurrently on one profile all survive, the same ticket added concurrently or twice leaves a single copy, and the returned list matches what was stored. The last test is a **control**: it runs the read-modify-write the code used before the atomic `$addToSet` and requires it to lose tickets under the same load. |
+| `EventVerificationServiceTest` | real HTTP stub server | The chain call to event-service: the caller's `Authorization` header is forwarded, a ticket owned by someone else is 403 and not "service unavailable", a missing ticket is 404, a broken event-service is reported as unavailable, and an unresponsive one does not block the request forever. |
+| `AuthGrpcClientTest` | real gRPC server on an ephemeral port | Every `Validate` call carries a **freshly computed** deadline instead of one baked into the stub at construction, a silent auth-service fails with `DEADLINE_EXCEEDED` in ~5 s rather than hanging, and a failing one surfaces as `UNAVAILABLE` — the status the handler turns into 503. |
+
+### Calibration
+
+A concurrency test would be meaningless if the scenario it describes could not actually fail on the harness running it, so each one was checked against the broken implementation it guards:
+
+- the two control tests ship in the repo and are green — the unsynchronized count-then-insert oversells seats, and the read-modify-write loses tickets;
+- the per-call deadline test was run against a stub built once with `withDeadlineAfter(5, SECONDS)`: the second call arrived with 3.4 s of deadline left, below the 4 s the test demands, while the real client leaves ~4.9 s on every call;
+- the `jti` test was run against a `generate` without it: two logins in the same second produced byte-identical tokens.
+
+### Running
+
+```bash
+# per service
+cd auth-service && ./mvnw test
+
+# only the tests that need no containers
+./mvnw test -Dtest='JwtServiceTest,AuthGrpcServiceTest'
+
+# frontend (vitest on jsdom) — shell smoke test: navbar, router outlet, logged-out state
+cd frontend && npm test -- --watch=false
+```
+
+Every push and pull request runs all of it in GitHub Actions (`.github/workflows/tests.yml`): the three Maven modules in parallel plus the frontend job. Testcontainers works unchanged on the hosted runners, which have Docker; a failed module uploads its surefire reports as an artifact.
+
+`TokenBlacklistIntegrationTest`, `TicketPurchaseConcurrencyTest` and `ClientTicketConcurrencyTest` start MySQL, Redis and MongoDB containers through Testcontainers, so Docker must be running; everything else is self-contained (in-process gRPC, `@WebMvcTest`, or a stub HTTP server on an ephemeral port). No test touches `docker-compose.yml` or any long-running local database.
+
+### Not covered
+
+REST controllers outside `TicketLookupController`, the event/package CRUD services, the client profile privacy rules (`publicInfo`, `publicSocialMedia`), and — beyond the shell smoke test — the Angular guards, interceptor and services.
 
 ---
 
@@ -690,7 +763,10 @@ event-platform/
 │   │   ├── repository/       UserRepository.java
 │   │   ├── service/          AuthService.java · JwtService.java · TokenBlacklistService.java
 │   │   └── config/           DataSeeder.java · SecurityConfig.java
-│   └── src/main/proto/       auth.proto
+│   ├── src/main/proto/       auth.proto
+│   └── src/test/java/com/example/auth_service/
+│       ├── grpc/             AuthGrpcServiceTest.java
+│       └── service/          JwtServiceTest.java · TokenBlacklistIntegrationTest.java
 │
 ├── event-service/
 │   ├── src/main/java/com/example/event_service/
@@ -705,7 +781,10 @@ event-platform/
 │   │   ├── model/            Event.java · EventPackage.java · Ticket.java
 │   │   ├── repository/       EventRepository.java · EventPackageRepository.java · TicketRepository.java
 │   │   └── service/          EventService.java · PackageService.java · TicketService.java
-│   └── src/main/proto/       auth.proto
+│   ├── src/main/proto/       auth.proto
+│   └── src/test/java/com/example/auth_service/
+│       ├── controller/       TicketLookupControllerTest.java
+│       └── service/          TicketServiceTest.java · TicketPurchaseConcurrencyTest.java
 │
 ├── client-service/
 │   ├── src/main/java/com/example/client_service/
@@ -716,10 +795,15 @@ event-platform/
 │   │   │                     ForbiddenException.java · UnauthorizedException.java
 │   │   ├── grpc/             AuthGrpcClient.java
 │   │   ├── model/            Client.java
-│   │   ├── repository/       ClientRepository.java
+│   │   ├── repository/       ClientRepository.java · ClientRepositoryCustom.java
+│   │   │                     ClientRepositoryImpl.java (atomic $addToSet)
 │   │   └── service/          TokenValidationService.java · ClientService.java
 │   │                         ClientTicketService.java · EventVerificationService.java
-│   └── src/main/proto/       auth.proto
+│   ├── src/main/proto/       auth.proto
+│   └── src/test/java/com/example/client_service/
+│       ├── grpc/             AuthGrpcClientTest.java
+│       └── service/          EventVerificationServiceTest.java
+│                             ClientTicketConcurrencyTest.java
 │
 ├── frontend/
 │   └── src/app/
@@ -734,9 +818,10 @@ event-platform/
 │           ├── events/       event-list/ · event-detail/ · create-event/ · edit-event/
 │           ├── admin/        manage-user/update-role.component   (route: /manage-user — ADMIN only)
 │           └── profile/      profile.component (ts · html · scss) — also handles self-registration
+│   ├── nginx.conf            serves the built SPA and proxies /api/* (baked into the image)
+│   └── Dockerfile
 │
-├── nginx/
-│   └── nginx.conf
+├── .github/workflows/        tests.yml — the three Maven modules plus the frontend
 ├── docker-compose.yml
 └── .env.example
 ```

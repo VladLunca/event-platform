@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import javax.crypto.SecretKey;
 import java.util.Date;
 import java.util.HexFormat;
+import java.util.UUID;
 
 @Service
 public class JwtService {
@@ -17,8 +18,14 @@ public class JwtService {
         this.secretKey = Keys.hmacShaKeyFor(HexFormat.of().parseHex(secretHex));
         this.expirationMs = expirationMs;
     }
+    /**
+     * The jti makes every issued token distinct. Without it two logins of the same user inside
+     * the same second produce byte-identical tokens — iat and exp have second precision — so a
+     * token revoked by logout would still be handed back by the next login and rejected.
+     */
     public String generate(Long userId, String role) {
         return Jwts.builder()
+                .id(UUID.randomUUID().toString())
                 .subject(String.valueOf(userId))
                 .claim("role", role)
                 .issuedAt(new Date())

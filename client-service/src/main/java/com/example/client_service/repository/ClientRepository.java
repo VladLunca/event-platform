@@ -7,7 +7,7 @@ import org.springframework.stereotype.Repository;
 import java.util.Optional;
 
 @Repository
-public interface ClientRepository extends MongoRepository<Client, String> {
+public interface ClientRepository extends MongoRepository<Client, String>, ClientRepositoryCustom {
     Optional<Client> findByEmail(String email);
     boolean existsByEmail(String email);
 }
