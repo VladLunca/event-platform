@@ -30,7 +30,11 @@ public class ClientService {
         }
     }
 
-    public ClientResponse createClient(CreateClientRequest request, String userId) {
+    public ClientResponse createClient(CreateClientRequest request, String userId, String authenticatedEmail) {
+        if (authenticatedEmail == null || authenticatedEmail.isBlank()
+                || !authenticatedEmail.equalsIgnoreCase(request.getEmail())) {
+            throw new ForbiddenException("Puteti crea un profil doar pentru propriul email");
+        }
         if (clientRepository.existsByEmail(request.getEmail())) {
             throw new IllegalStateException("Exista deja un profil pentru acest email");
         }

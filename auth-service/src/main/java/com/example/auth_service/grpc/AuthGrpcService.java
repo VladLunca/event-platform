@@ -36,6 +36,9 @@ public class AuthGrpcService extends AuthServiceGrpc.AuthServiceImplBase {
         ValidateResponse.Builder builder = ValidateResponse.newBuilder().setValid(result.valid());
         if (result.valid()) {
             builder.setUserId(result.userId()).setRole(result.role());
+            if (result.email() != null) {
+                builder.setEmail(result.email());
+            }
         }
         responseObserver.onNext(builder.build());
         responseObserver.onCompleted();

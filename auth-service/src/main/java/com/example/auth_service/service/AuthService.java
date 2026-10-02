@@ -34,14 +34,17 @@ public class AuthService {
             throw new InvalidCredentialsException("Credentiale invalide");
         }
 
-        return jwtService.generate(user.getId(), user.getRole().name());
+        return jwtService.generate(user.getId(), user.getRole().name(), user.getEmail());
     }
 
     public ValidateResult validate(String token) {
         if (blacklistService.isBlacklisted(token) || !jwtService.isValid(token)) {
-            return new ValidateResult(false, null, null);
+            return new ValidateResult(false, null, null, null);
         }
-        return new ValidateResult(true, jwtService.getUserId(token), jwtService.getRole(token));
+        return new ValidateResult(true,
+                jwtService.getUserId(token),
+                jwtService.getRole(token),
+                jwtService.getEmail(token));
     }
 
     public void logout(String token) {

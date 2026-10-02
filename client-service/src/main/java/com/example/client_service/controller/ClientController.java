@@ -36,7 +36,7 @@ public class ClientController {
     public ResponseEntity<ClientResponse> createClient(@RequestHeader("Authorization") String authHeader, @Valid @RequestBody CreateClientRequest request) {
         ValidateResponse auth = tokenValidationService.requireRole(authHeader, "CLIENT");
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(clientService.createClient(request, auth.getUserId()));
+                .body(clientService.createClient(request, auth.getUserId(), auth.getEmail()));
     }
 
     @GetMapping("/{email:.+}")

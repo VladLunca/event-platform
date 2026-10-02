@@ -158,7 +158,7 @@ class TokenBlacklistIntegrationTest {
 
     @Test
     void logoutOfAnAlreadyExpiredTokenStoresNothing() {
-        String expiredToken = new JwtService(SECRET, -EXPIRATION_MS).generate(userId, "CLIENT");
+        String expiredToken = new JwtService(SECRET, -EXPIRATION_MS).generate(userId, "CLIENT", "client@platform.com");
 
         logout(expiredToken);
 
@@ -181,7 +181,7 @@ class TokenBlacklistIntegrationTest {
             TokenBlacklistService otherReplica = new TokenBlacklistService(otherTemplate, jwtService);
 
             assertThat(otherReplica.isBlacklisted(token)).isTrue();
-            assertThat(otherReplica.isBlacklisted(jwtService.generate(userId, "ADMIN"))).isFalse();
+            assertThat(otherReplica.isBlacklisted(jwtService.generate(userId, "ADMIN", "admin@platform.com"))).isFalse();
         } finally {
             otherConnection.stop();
             otherConnection.destroy();

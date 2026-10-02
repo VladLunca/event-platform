@@ -60,29 +60,42 @@ class AuthGrpcServiceTest {
 
     @Test
     void validTokenIsAnsweredWithTheIdentityBehindIt() {
-        when(authService.validate(TOKEN)).thenReturn(new ValidateResult(true, "42", "CLIENT"));
+        when(authService.validate(TOKEN)).thenReturn(new ValidateResult(true, "42", "CLIENT", "client@platform.com"));
 
         ValidateResponse response = stub.validate(ValidateRequest.newBuilder().setToken(TOKEN).build());
 
         assertThat(response.getValid()).isTrue();
         assertThat(response.getUserId()).isEqualTo("42");
         assertThat(response.getRole()).isEqualTo("CLIENT");
+        assertThat(response.getEmail()).isEqualTo("client@platform.com");
+    }
+
+    @Test
+    void validTokenWithoutAnEmailAnswersWithAnEmptyEmailInsteadOfFailing() {
+        when(authService.validate(TOKEN)).thenReturn(new ValidateResult(true, "42", "CLIENT", null));
+
+        ValidateResponse response = stub.validate(ValidateRequest.newBuilder().setToken(TOKEN).build());
+
+        assertThat(response.getValid()).isTrue();
+        assertThat(response.getUserId()).isEqualTo("42");
+        assertThat(response.getEmail()).isEmpty();
     }
 
     @Test
     void rejectedTokenIsAnsweredWithoutAnyIdentity() {
-        when(authService.validate(TOKEN)).thenReturn(new ValidateResult(false, null, null));
+        when(authService.validate(TOKEN)).thenReturn(new ValidateResult(false, null, null, null));
 
         ValidateResponse response = stub.validate(ValidateRequest.newBuilder().setToken(TOKEN).build());
 
         assertThat(response.getValid()).isFalse();
         assertThat(response.getUserId()).isEmpty();
         assertThat(response.getRole()).isEmpty();
+        assertThat(response.getEmail()).isEmpty();
     }
 
     @Test
     void rejectedTokenIsAnOkResponseNotAGrpcError() {
-        when(authService.validate(anyString())).thenReturn(new ValidateResult(false, null, null));
+        when(authService.validate(anyString())).thenReturn(new ValidateResult(false, null, null, null));
 
         ValidateResponse response = stub.validate(ValidateRequest.newBuilder().setToken("garbage").build());
 

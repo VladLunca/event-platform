@@ -15,12 +15,13 @@ class JwtServiceTest {
     private static final String OTHER_SECRET =
             "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100";
     private static final long ONE_HOUR = 3_600_000L;
+    private static final String EMAIL = "client@platform.com";
 
     private final JwtService jwtService = new JwtService(SECRET, ONE_HOUR);
 
     @Test
     void issuedTokenCarriesTheUserIdAndTheRole() {
-        String token = jwtService.generate(42L, "CLIENT");
+        String token = jwtService.generate(42L, "CLIENT", EMAIL);
 
         assertThat(jwtService.isValid(token)).isTrue();
         assertThat(jwtService.getUserId(token)).isEqualTo("42");
@@ -29,8 +30,8 @@ class JwtServiceTest {
 
     @Test
     void twoTokensIssuedInTheSameSecondAreStillDifferent() {
-        String first = jwtService.generate(42L, "CLIENT");
-        String second = jwtService.generate(42L, "CLIENT");
+        String first = jwtService.generate(42L, "CLIENT", EMAIL);
+        String second = jwtService.generate(42L, "CLIENT", EMAIL);
 
         assertThat(first).isNotEqualTo(second);
         assertThat(jwtService.isValid(first)).isTrue();
@@ -39,14 +40,14 @@ class JwtServiceTest {
 
     @Test
     void tokenSignedWithAnotherSecretIsRejected() {
-        String foreignToken = new JwtService(OTHER_SECRET, ONE_HOUR).generate(42L, "CLIENT");
+        String foreignToken = new JwtService(OTHER_SECRET, ONE_HOUR).generate(42L, "CLIENT", EMAIL);
 
         assertThat(jwtService.isValid(foreignToken)).isFalse();
     }
 
     @Test
     void roleClaimEscalatedWithoutResigningIsRejected() {
-        String token = jwtService.generate(42L, "CLIENT");
+        String token = jwtService.generate(42L, "CLIENT", EMAIL);
         String escalated = replaceInPayload(token, "\"role\":\"CLIENT\"", "\"role\":\"ADMIN\"");
 
         assertThat(escalated).isNotEqualTo(token);
@@ -56,7 +57,7 @@ class JwtServiceTest {
 
     @Test
     void subjectSwappedToAnotherUserIsRejected() {
-        String token = jwtService.generate(42L, "CLIENT");
+        String token = jwtService.generate(42L, "CLIENT", EMAIL);
         String impersonated = replaceInPayload(token, "\"sub\":\"42\"", "\"sub\":\"1\"");
 
         assertThat(jwtService.isValid(impersonated)).isFalse();
@@ -73,7 +74,7 @@ class JwtServiceTest {
 
     @Test
     void correctlySignedButExpiredTokenIsRejected() {
-        String expired = new JwtService(SECRET, -ONE_HOUR).generate(42L, "CLIENT");
+        String expired = new JwtService(SECRET, -ONE_HOUR).generate(42L, "CLIENT", EMAIL);
 
         assertThat(jwtService.isValid(expired)).isFalse();
     }
@@ -88,7 +89,7 @@ class JwtServiceTest {
     @Test
     void expirationIsReadFromTheTokenItself() {
         long before = System.currentTimeMillis();
-        String token = jwtService.generate(42L, "CLIENT");
+        String token = jwtService.generate(42L, "CLIENT", EMAIL);
 
         assertThat(jwtService.getExpiration(token))
                 .isBetween(before + ONE_HOUR - 5_000, System.currentTimeMillis() + ONE_HOUR);
@@ -97,17 +98,43 @@ class JwtServiceTest {
     @Test
     void expirationOfAnUnreadableTokenIsZeroSoNoTtlCanBeDerivedFromIt() {
         assertThat(jwtService.getExpiration("not-a-token")).isZero();
-        assertThat(jwtService.getExpiration(new JwtService(OTHER_SECRET, ONE_HOUR).generate(1L, "ADMIN")))
+        assertThat(jwtService.getExpiration(new JwtService(OTHER_SECRET, ONE_HOUR).generate(1L, "ADMIN", EMAIL)))
                 .isZero();
     }
 
     @Test
     void payloadIsPlainReadableBase64SoTheTamperingTestsReallyTamper() {
-        String token = jwtService.generate(7L, "OWNER_EVENT");
+        String token = jwtService.generate(7L, "OWNER_EVENT", EMAIL);
         String payload = new String(
                 Base64.getUrlDecoder().decode(token.split("\\.")[1]), StandardCharsets.UTF_8);
 
         assertThat(payload).contains("\"sub\":\"7\"", "\"role\":\"OWNER_EVENT\"");
+    }
+
+    @Test
+    void issuedTokenCarriesTheEmailSoClientServiceCanCheckProfileOwnership() {
+        String token = jwtService.generate(42L, "CLIENT", EMAIL);
+
+        assertThat(jwtService.getEmail(token)).isEqualTo(EMAIL);
+    }
+
+    @Test
+    void emailClaimSwappedToAnotherAddressIsRejected() {
+        String token = jwtService.generate(42L, "CLIENT", EMAIL);
+        String impersonated = replaceInPayload(token,
+                "\"email\":\"" + EMAIL + "\"", "\"email\":\"victim@platform.com\"");
+
+        assertThat(impersonated).isNotEqualTo(token);
+        assertThat(jwtService.isValid(impersonated)).isFalse();
+        assertThatThrownBy(() -> jwtService.getEmail(impersonated)).isInstanceOf(Exception.class);
+    }
+
+    @Test
+    void tokenIssuedWithoutAnEmailStillValidatesButCarriesNone() {
+        String token = jwtService.generate(42L, "CLIENT", null);
+
+        assertThat(jwtService.isValid(token)).isTrue();
+        assertThat(jwtService.getEmail(token)).isNull();
     }
 
     private static String replaceInPayload(String token, String from, String to) {

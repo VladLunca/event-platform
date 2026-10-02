@@ -23,11 +23,12 @@ public class JwtService {
      * the same second produce byte-identical tokens — iat and exp have second precision — so a
      * token revoked by logout would still be handed back by the next login and rejected.
      */
-    public String generate(Long userId, String role) {
+    public String generate(Long userId, String role, String email) {
         return Jwts.builder()
                 .id(UUID.randomUUID().toString())
                 .subject(String.valueOf(userId))
                 .claim("role", role)
+                .claim("email", email)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + expirationMs))
                 .signWith(secretKey)
@@ -57,6 +58,10 @@ public class JwtService {
 
     public String getRole(String token) {
         return parseClaims(token).get("role", String.class);
+    }
+
+    public String getEmail(String token) {
+        return parseClaims(token).get("email", String.class);
     }
 
     private Claims parseClaims(String token) {

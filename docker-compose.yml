@@ -93,7 +93,6 @@ services:
       GRPC_PORT: 9090
     ports:
       - "8090:8080"
-      - "9090:9090"
     depends_on:
       auth-db:
         condition: service_healthy

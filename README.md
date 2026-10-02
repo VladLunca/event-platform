@@ -31,13 +31,13 @@ A microservices-based platform for managing artistic events, ticket packages, an
 
 ## Core Functionality
 
-**Event Management**: Users with the `OWNER_EVENT` role create and manage artistic events. Each event has a name, optional location, and description. Owners can define one or more ticket packages per event in a single operation, each with a fixed seat count. Only the event owner can modify or delete their own events and packages. Admins have unrestricted access. Event browsing is public — no account is required to list or view events.
+**Event Management**: Users with the `OWNER_EVENT` role create and manage artistic events. Each event has a name, optional location, and description. Packages are added from the event detail page, where several can be filled in and saved in one action — the API itself takes one package per `POST`, and the client issues them in parallel. Each package has a fixed seat count. Only the event owner can modify or delete their own events and packages. Admins have unrestricted access. Event browsing is public — no account is required to list or view events.
 
-**Ticket Sales**: Clients browse public event and package listings and purchase tickets for any package with available seats. The system tracks sold tickets in real time and blocks purchases when a package reaches capacity. Each ticket is identified by a UUID generated at purchase time. Immediately after purchase, the Angular client automatically registers the UUID in the client profile — no manual step required.
+**Ticket Sales**: Clients browse public event and package listings and purchase tickets for any package with available seats. The system tracks sold tickets in real time and blocks purchases when a package reaches capacity. Each ticket is identified by a UUID generated at purchase time. Immediately after purchase, the Angular client automatically registers the UUID in the client profile — no manual step required. The profile page also keeps a form for pasting a ticket UUID by hand, which goes through the same validation and is there for a purchase whose automatic registration failed.
 
 **Client Profiles**: Clients maintain a personal profile stored in MongoDB with optional public information and social media links. The profile page displays each registered ticket enriched with the event name, package name, and seat count — resolved live from the event-service. The client-service validates ticket ownership via a chain call to the event-service before persisting any UUID.
 
-**Account Administration**: Anyone can self-register a `CLIENT` account from the profile page (`/profile`) — no dedicated registration page exists. The `ADMIN` role manages access levels from `/manage-user`: instead of creating accounts from scratch, an admin looks up an existing user by email and changes their role between `CLIENT` and `OWNER_EVENT`. Admins also have unrestricted CRUD access to all events, packages, and user roles, but do not interact with client profile data.
+**Account Administration**: Anyone can self-register a `CLIENT` account from the profile page (`/profile`) — no dedicated registration page exists. The `ADMIN` role manages access levels from `/manage-user`: instead of creating accounts from scratch, an admin submits an existing user's email together with the new role — `CLIENT` or `OWNER_EVENT` — and the server returns `400` if no account holds that address. There is no user search or listing. Admins also have unrestricted CRUD access to all events, packages, and user roles, but do not interact with client profile data.
 
 ---
 
@@ -110,7 +110,7 @@ sequenceDiagram
 
     A->>CS: POST /api/clients/{email}/tickets { ticketId: "uuid-..." }
     CS->>AS: gRPC Validate(token)
-    AS-->>CS: valid=true, userId, role=CLIENT
+    AS-->>CS: valid=true, userId, role=CLIENT, email
     CS->>ES: GET /events/tickets/{ticketId} (forwards caller's Bearer token)
     ES->>AS: gRPC Validate(token)
     AS-->>ES: valid=true, userId, role=CLIENT
@@ -191,7 +191,7 @@ gRPC Validate(token) → auth-service
          │
          ├── valid=false → 401 Unauthorized
          │
-         └── valid=true → { userId, role }
+         └── valid=true → { userId, role, email }
                   │
                   ├── role insufficient → 403 Forbidden
                   │
@@ -220,8 +220,11 @@ Tokens follow the **JWS** standard (RFC 7515/7519): `base64url(header).base64url
 | `jti` | string | Random UUID, unique per issued token |
 | `sub` | string | User ID — numeric ID stored as string |
 | `role` | string | `ADMIN`, `OWNER_EVENT`, or `CLIENT` |
+| `email` | string | The account's email address |
 | `iat` | number | Issued-at timestamp |
 | `exp` | number | Expiration timestamp (default: 24 h) |
+
+The `email` claim exists so client-service can verify that a profile is being created for the caller's own address (see [`POST /clients`](#client-profile)). Carrying it in the token keeps `Validate` free of a database read: the claim is covered by the signature, so tampering with it invalidates the token exactly like tampering with `sub` or `role`.
 
 `jti` carries no meaning on its own — nothing reads it — but without it the token is a pure function of `sub`, `role` and the current second, so two logins of the same user inside one second produce byte-identical tokens. That collides with the blacklist below, which is keyed by token: logging out and immediately logging back in would hand the user a token that is already revoked, and the session would appear broken until the clock ticked over. The UUID makes every issued token a distinct key.
 
@@ -266,21 +269,37 @@ Defined in `auth.proto` — identical copy in all services under `src/main/proto
 
 ```protobuf
 syntax = "proto3";
+
 package auth;
 
+option java_multiple_files = true;
 option java_package = "com.example.auth.grpc";
+option java_outer_classname = "AuthProto";
 
 service AuthService {
+  rpc Login    (LoginRequest)    returns (LoginResponse);
   rpc Validate (ValidateRequest) returns (ValidateResponse);
   rpc Logout   (LogoutRequest)   returns (LogoutResponse);
 }
 
-message ValidateRequest  { string token   = 1; }
-message ValidateResponse { bool valid     = 1; string user_id = 2; string role = 3; }
+message LoginRequest  { string username = 1; string password = 2; }
+message LoginResponse { string token    = 1; }
+
+message ValidateRequest  { string token = 1; }
+message ValidateResponse {
+  bool   valid   = 1;
+  string user_id = 2;
+  string role    = 3;
+  string email   = 4;
+}
 
 message LogoutRequest  { string token   = 1; }
 message LogoutResponse { bool   success = 1; }
 ```
+
+`Login` is implemented by `AuthGrpcService` but no service calls it — the Angular client logs in over REST. It exists as the gRPC counterpart of `POST /auth/login` and maps bad credentials to `UNAUTHENTICATED`.
+
+On a rejected token, `valid` is `false` and `user_id`, `role` and `email` are all empty strings — proto3 has no null, so an absent value is the empty string, and callers must treat an empty `email` as "unknown" rather than as a match.
 
 All RPCs use the **Unary RPC** pattern. event-service and client-service connect to auth-service via `ManagedChannelBuilder.forAddress(AUTH_GRPC_HOST, AUTH_GRPC_PORT).usePlaintext()`.
 
@@ -421,6 +440,16 @@ Results are sorted alphabetically by name.
 
 `ownerUserId` is stored server-side and never exposed in responses.
 
+The two links above are always present. When the request carries a token belonging to an `ADMIN` or to the event's own `OWNER_EVENT`, three more are added:
+
+| Rel | Method the frontend uses it with | Target |
+|-----|--------------------------------|--------|
+| `edit` | `PUT` | `/events/{id}` |
+| `delete` | `DELETE` | `/events/{id}` |
+| `create-package` | `POST` | `/events/{id}/packages` |
+
+The Angular client treats these as the authorization signal rather than re-deriving it: `canManageEvent()` is `hateoas.has(event, 'edit')`.
+
 ---
 
 ### Packages
@@ -452,14 +481,24 @@ Results are sorted alphabetically by name.
   "seatCount": 50,
   "availableSeats": 47,
   "_links": {
-    "self":    { "href": "/events/1/packages/3" },
-    "event":   { "href": "/events/1" },
-    "tickets": { "href": "/events/1/packages/3/tickets" }
+    "self":  { "href": "/events/1/packages/3" },
+    "event": { "href": "/events/1" }
   }
 }
 ```
 
 `availableSeats` is computed dynamically as `seatCount − COUNT(tickets)`.
+
+`self` and `event` are always present; the rest depend on who is asking:
+
+| Rel | Added for | Target |
+|-----|-----------|--------|
+| `edit-package` | ADMIN or the event's OWNER_EVENT | `PUT /events/{eventId}/packages/{packageId}` |
+| `delete-package` | ADMIN or the event's OWNER_EVENT | `DELETE /events/{eventId}/packages/{packageId}` |
+| `tickets` | ADMIN or the event's OWNER_EVENT | `GET .../tickets` — the sold-ticket list |
+| `purchase` | CLIENT | `POST .../tickets` — buy a ticket |
+
+An anonymous reader gets only `self` and `event`. An invalid or expired token is treated as anonymous rather than rejected, so a stale session degrades to the public view instead of breaking the page.
 
 ---
 
@@ -515,11 +554,14 @@ A valid token is required and the same role rule as the HATEOAS ticket endpoint 
 
 | Status | Condition |
 |--------|-----------|
-| `401` | Missing, invalid, expired, or blacklisted token |
-| `403` | Valid token but insufficient role or not the owner |
+| `400` | No `Authorization` header at all on an endpoint that requires one, or a body that fails `@Valid` — both are rejected by Spring before any controller code runs |
+| `401` | A header is present but unusable: not `Bearer …`, or a token that is invalid, expired or blacklisted |
+| `403` | Valid token but insufficient role, or not the owner of the resource |
 | `404` | Resource not found |
 | `409` | Conflict — no seats available |
 | `503` | The gRPC call to auth-service failed or exceeded its 5s deadline — the request could not be authorized because a dependency is down, not because the token is bad |
+
+The `{ "error": … }` shape above comes from `GlobalExceptionHandler`, which covers 401/403/404/409/503. The two `400` cases are raised by Spring itself and are **not** handled there, so they carry Spring's default error body instead. `TicketLookupControllerTest` pins the missing-header case at `400`, the point being that the request never reaches the service.
 
 ---
 
@@ -533,10 +575,20 @@ All endpoints require `Authorization: Bearer <token>`.
 
 | Method | Path | Auth | Status | Description |
 |--------|------|------|--------|-------------|
-| `POST` | `/clients` or `/clients/` | CLIENT | 201, 401, 409 | Create profile — email from request body must match the authenticated user |
+| `POST` | `/clients` or `/clients/` | CLIENT | 201, 401, 403, 409 | Create profile — email in the body must match the `email` claim of the caller's token |
 | `GET` | `/clients/{email}` | CLIENT (own) or OWNER_EVENT | 200, 401, 403, 404 | Get profile — CLIENT sees all fields; OWNER_EVENT sees only public fields |
 | `PATCH` | `/clients/{email}` | CLIENT (own) | 200, 401, 403, 404 | Partial update — only provided fields are changed |
 | `DELETE` | `/clients/{email}` | CLIENT (own) | 204, 401, 403, 404 | Delete profile |
+
+#### POST `/clients` — ownership of the email
+
+The email in the body is the profile's lookup key for every later read, so it has to be the caller's own address: otherwise any `CLIENT` could open a profile under someone else's email and own that address inside this service. client-service compares the body against the `email` claim carried by the token (case-insensitively) and returns `403` on a mismatch:
+
+```json
+{ "error": "Puteti crea un profil doar pentru propriul email" }
+```
+
+If the token carries no email at all — a token signed before the claim existed is still a valid signature — the request is refused rather than trusted, so the check fails closed.
 
 #### GET `/clients/{email}` — response (CLIENT)
 
@@ -572,8 +624,11 @@ All endpoints require `Authorization: Bearer <token>`.
 // 200 — returns updated ticket list
 ["f47ac10b-58cc-4372-a567-0e02b2c3d479", "..."]
 
-// 403 — ticket not found or does not belong to the caller
-{ "error": "Biletul nu a fost gasit sau nu va apartine" }
+// 403 — the ticket does not belong to the caller
+{ "error": "Biletul nu va apartine" }
+
+// 404 — the ticket does not exist in the event-service
+{ "error": "Biletul nu a fost gasit in sistemul de evenimente" }
 ```
 
 The chain call to `GET /events/tickets/{ticketId}` is made synchronously before persisting the UUID, forwarding the caller's `Authorization` header. The outcome maps as follows:
@@ -596,7 +651,7 @@ The chain call is bounded by a 2s connect timeout and a 5s read timeout. Without
 
 **No cross-database foreign keys**: `owner_user_id` in `events` and `tickets` stores the JWT `sub` as a plain string. The auth-service, event-service, and client-service each have their own isolated database. Referential integrity between services is enforced by application logic (ownership checks), not by database constraints.
 
-**JWT claims over session state**: Every protected request carries all necessary identity information (`userId`, `role`) inside the JWT. Services do not maintain sessions — the token is the only source of truth per request, so any replica can serve any request and the services scale independently. The blacklist does not contradict this: it is *shared* state, not *per-client session* state. No instance remembers anything about a caller between requests; it consults a store every instance can see, exactly as it consults MySQL. What the blacklist actually costs is lookup-free validation, not statelessness — see [Token Blacklist](#token-blacklist).
+**JWT claims over session state**: Every protected request carries all necessary identity information (`userId`, `role`, `email`) inside the JWT. The `email` claim is there for exactly this reason: client-service has to check profile ownership, and reading the address out of the signed token keeps `Validate` from needing a database lookup per request. Services do not maintain sessions — the token is the only source of truth per request, so any replica can serve any request and the services scale independently. The blacklist does not contradict this: it is *shared* state, not *per-client session* state. No instance remembers anything about a caller between requests; it consults a store every instance can see, exactly as it consults MySQL. What the blacklist actually costs is lookup-free validation, not statelessness — see [Token Blacklist](#token-blacklist).
 
 **gRPC for token validation**: event-service and client-service validate tokens via gRPC instead of REST to reduce per-request overhead (HTTP/2 multiplexing, binary Protobuf encoding, persistent connection).
 
@@ -622,29 +677,33 @@ The suites do not chase line coverage. They cover the places where a bug is **si
 
 ### What each suite locks down
 
-**auth-service** — 27 tests
+**auth-service** — 31 tests
 
 | Suite | Kind | What it protects |
 |-------|------|------------------|
-| `JwtServiceTest` | unit | A token is only accepted if the signature holds: foreign secret, `role` escalated from `CLIENT` to `ADMIN`, `sub` swapped to another user, `alg: none` with an empty signature, and expired-but-correctly-signed tokens are all rejected. Also pins `getExpiration() == 0` for unreadable tokens — the contract the blacklist TTL is derived from — and that two tokens issued in the same second differ. |
-| `AuthGrpcServiceTest` | in-process gRPC + Mockito | The wire contract: a valid token answers with `user_id`/`role`, a rejected one answers `valid=false` **with both fields empty**, rejection is a normal response rather than a gRPC error, and bad credentials map to `UNAUTHENTICATED` instead of a generic failure. |
+| `JwtServiceTest` | unit | A token is only accepted if the signature holds: foreign secret, `role` escalated from `CLIENT` to `ADMIN`, `sub` swapped to another user, **`email` swapped to another address**, `alg: none` with an empty signature, and expired-but-correctly-signed tokens are all rejected. Also pins `getExpiration() == 0` for unreadable tokens — the contract the blacklist TTL is derived from — that two tokens issued in the same second differ, and that a token minted without an email still validates but reports none. |
+| `AuthGrpcServiceTest` | in-process gRPC + Mockito | The wire contract: a valid token answers with `user_id`/`role`/`email`, a rejected one answers `valid=false` **with all three fields empty**, a valid token that carries no email answers with an empty email instead of failing the call, rejection is a normal response rather than a gRPC error, and bad credentials map to `UNAUTHENTICATED` instead of a generic failure. |
 | `TokenBlacklistIntegrationTest` | Testcontainers (MySQL + Redis), full context over in-process gRPC | The logout story end to end: a revoked token stops validating immediately; the Redis key is `bl:` + SHA-256, never the token in clear text; its TTL matches the token's remaining lifetime; an already-expired token is not stored at all; logging in again right after logout yields a working token; and the revocation is visible through a second Redis connection standing in for another replica. |
 
-**event-service** — 22 tests
+**event-service** — 28 tests
 
 | Suite | Kind | What it protects |
 |-------|------|------------------|
 | `TicketServiceTest` | unit | The ticket visibility matrix — admin sees any ticket, a client only its own, an event owner only tickets of its own events, unknown roles nothing — plus sold-out rejection and the fact that `purchaseTicket` loads the package *through the locking query*. |
 | `TicketLookupControllerTest` | `@WebMvcTest` | The HTTP boundary: a missing `Authorization` header never reaches the service, an invalid token is 401, a foreign ticket is 403, the identity used for the check comes from the token and not from the request, and an auth-service outage is 503 rather than 500. |
+| `PackageControllerTest` | `@WebMvcTest` | That package reads really are public — both the list and the single package answer 200 with **no** `Authorization` header — and that the HAL links are the authorization signal they are documented to be: anonymous gets `self`+`event` only, an owner additionally gets `edit-package`/`delete-package`/`tickets`, a CLIENT gets `purchase` and nothing else, and an expired token degrades to the anonymous view instead of erroring. |
 | `TicketPurchaseConcurrencyTest` | Testcontainers (MySQL) | Seats are never oversold: two buyers racing for the last seat, ten buyers racing for three. The third test is a **control** — it runs the unsafe count-then-insert the code used before the pessimistic lock, against the same database and thread schedule, and requires it to oversell. If the control ever stopped overselling, the harness could not expose the race and the other two tests would be proving nothing. |
 
-**client-service** — 19 tests
+**client-service** — 25 tests
 
 | Suite | Kind | What it protects |
 |-------|------|------------------|
 | `ClientTicketConcurrencyTest` | Testcontainers (MongoDB) | Ten tickets registered concurrently on one profile all survive, the same ticket added concurrently or twice leaves a single copy, and the returned list matches what was stored. The last test is a **control**: it runs the read-modify-write the code used before the atomic `$addToSet` and requires it to lose tickets under the same load. |
 | `EventVerificationServiceTest` | real HTTP stub server | The chain call to event-service: the caller's `Authorization` header is forwarded, a ticket owned by someone else is 403 and not "service unavailable", a missing ticket is 404, a broken event-service is reported as unavailable, and an unresponsive one does not block the request forever. |
 | `AuthGrpcClientTest` | real gRPC server on an ephemeral port | Every `Validate` call carries a **freshly computed** deadline instead of one baked into the stub at construction, a silent auth-service fails with `DEADLINE_EXCEEDED` in ~5 s rather than hanging, and a failing one surfaces as `UNAVAILABLE` — the status the handler turns into 503. |
+| `ClientServiceTest` | unit + Mockito | Profile creation is bound to the caller's identity: a profile for the caller's own email is created, one for somebody else's email is refused and never reaches the repository, the comparison ignores case, a token with no email is refused rather than trusted, the stored `userId` comes from the token and not from the body, and a duplicate email is still a conflict. |
+
+Each module count also includes one `contextLoads` smoke test (`*ApplicationTests`) that boots the full Spring context, which is why the suites listed per module sum to one less than the module total.
 
 ### Calibration
 
@@ -661,7 +720,9 @@ A concurrency test would be meaningless if the scenario it describes could not a
 cd auth-service && ./mvnw test
 
 # only the tests that need no containers
-./mvnw test -Dtest='JwtServiceTest,AuthGrpcServiceTest'
+cd auth-service   && ./mvnw test -Dtest='JwtServiceTest,AuthGrpcServiceTest'
+cd event-service  && ./mvnw test -Dtest='TicketServiceTest,TicketLookupControllerTest,PackageControllerTest'
+cd client-service && ./mvnw test -Dtest='ClientServiceTest,EventVerificationServiceTest,AuthGrpcClientTest'
 
 # frontend (vitest on jsdom) — shell smoke test: navbar, router outlet, logged-out state
 cd frontend && npm test -- --watch=false
@@ -673,11 +734,13 @@ Every push and pull request runs all of it in GitHub Actions (`.github/workflows
 
 ### Not covered
 
-REST controllers outside `TicketLookupController`, the event/package CRUD services, the client profile privacy rules (`publicInfo`, `publicSocialMedia`), and — beyond the shell smoke test — the Angular guards, interceptor and services.
+`EventController`, `TicketController` and `ClientController`, the event/package CRUD services, the client profile privacy rules (`publicInfo`, `publicSocialMedia` in `ClientResponse.fromPublic`), profile update and delete, and — beyond the shell smoke test — the Angular guards, interceptor and services.
 
 ---
 
 ## Database Schemas
+
+The two MySQL schemas are created by Hibernate at startup from the JPA entities (`spring.jpa.hibernate.ddl-auto=update`) — there are no migration scripts and no Flyway/Liquibase. The tables below describe what Hibernate generates, so changing an entity changes the schema on the next boot, and a column removed from an entity is left behind rather than dropped. MongoDB needs no schema; the `clients` collection is created on first write and the unique index comes from `@Indexed(unique = true)`.
 
 ### Auth Service — MySQL
 
@@ -688,7 +751,7 @@ REST controllers outside `TicketLookupController`, the event/package CRUD servic
 | `id` | BIGINT | PK, AUTO_INCREMENT |
 | `email` | VARCHAR | UNIQUE, NOT NULL |
 | `password` | VARCHAR | NOT NULL — BCrypt hashed |
-| `role` | ENUM(`ADMIN`,`OWNER_EVENT`,`CLIENT`) | NOT NULL |
+| `role` | VARCHAR | NOT NULL — `@Enumerated(EnumType.STRING)`, so Hibernate stores the enum name and adds a `CHECK role IN ('ADMIN','OWNER_EVENT','CLIENT')`; it is not a native MySQL `ENUM` column |
 
 ---
 
@@ -712,7 +775,7 @@ REST controllers outside `TicketLookupController`, the event/package CRUD servic
 | `name` | VARCHAR | NOT NULL |
 | `description` | VARCHAR | NULLABLE |
 | `location` | VARCHAR | NULLABLE |
-| `seat_count` | INT | NOT NULL, ≥ 1 |
+| `seat_count` | INT | NOT NULL — the `≥ 1` floor is a `@Min(1)` bean-validation rule on `CreatePackageRequest`, not a database constraint |
 | `event_id` | BIGINT | FK → events.event_id, NOT NULL |
 
 **`tickets`**
@@ -756,20 +819,26 @@ REST controllers outside `TicketLookupController`, the event/package CRUD servic
 ```
 event-platform/
 ├── auth-service/
-│   ├── src/main/java/com/example/event_service/
+│   ├── src/main/java/com/example/auth_service/
+│   │   ├── AuthServiceApplication.java
 │   │   ├── controller/       AuthController.java
+│   │   ├── dto/              LoginRequest.java · CreateUserRequest.java
+│   │   │                     UpdateRoleRequest.java · ValidateResult.java
+│   │   ├── exception/        InvalidCredentialsException.java
 │   │   ├── grpc/             AuthGrpcService.java
-│   │   ├── model/            User.java
+│   │   ├── model/            User.java · Role.java
 │   │   ├── repository/       UserRepository.java
 │   │   ├── service/          AuthService.java · JwtService.java · TokenBlacklistService.java
 │   │   └── config/           DataSeeder.java · SecurityConfig.java
 │   ├── src/main/proto/       auth.proto
 │   └── src/test/java/com/example/auth_service/
+│       ├── AuthServiceApplicationTests.java    (contextLoads smoke test)
 │       ├── grpc/             AuthGrpcServiceTest.java
 │       └── service/          JwtServiceTest.java · TokenBlacklistIntegrationTest.java
 │
 ├── event-service/
-│   ├── src/main/java/com/example/event_service/
+│   ├── src/main/java/com/example/auth_service/      ← note: package is auth_service
+│   │   ├── EventServiceApplication.java
 │   │   ├── controller/       EventController.java · PackageController.java
 │   │   │                     TicketController.java · TicketLookupController.java
 │   │   ├── dto/              CreateEventRequest.java · EventResponse.java
@@ -777,17 +846,20 @@ event-platform/
 │   │   │                     TicketResponse.java · TicketDetailResponse.java
 │   │   ├── exception/        GlobalExceptionHandler.java · NotFoundException.java
 │   │   │                     ForbiddenException.java · UnauthorizedException.java
-│   │   ├── grpc/             TokenValidationService.java
+│   │   ├── grpc/             AuthGrpcClient.java
 │   │   ├── model/            Event.java · EventPackage.java · Ticket.java
 │   │   ├── repository/       EventRepository.java · EventPackageRepository.java · TicketRepository.java
 │   │   └── service/          EventService.java · PackageService.java · TicketService.java
+│   │                         TokenValidationService.java
 │   ├── src/main/proto/       auth.proto
 │   └── src/test/java/com/example/auth_service/
-│       ├── controller/       TicketLookupControllerTest.java
+│       ├── EventServiceApplicationTests.java   (contextLoads smoke test)
+│       ├── controller/       TicketLookupControllerTest.java · PackageControllerTest.java
 │       └── service/          TicketServiceTest.java · TicketPurchaseConcurrencyTest.java
 │
 ├── client-service/
 │   ├── src/main/java/com/example/client_service/
+│   │   ├── ClientServiceApplication.java
 │   │   ├── controller/       ClientController.java
 │   │   ├── dto/              CreateClientRequest.java · UpdateClientRequest.java
 │   │   │                     AddTicketRequest.java · ClientResponse.java
@@ -801,23 +873,26 @@ event-platform/
 │   │                         ClientTicketService.java · EventVerificationService.java
 │   ├── src/main/proto/       auth.proto
 │   └── src/test/java/com/example/client_service/
+│       ├── ClientServiceApplicationTests.java  (contextLoads smoke test)
 │       ├── grpc/             AuthGrpcClientTest.java
 │       └── service/          EventVerificationServiceTest.java
-│                             ClientTicketConcurrencyTest.java
+│                             ClientTicketConcurrencyTest.java · ClientServiceTest.java
 │
 ├── frontend/
-│   └── src/app/
+│   ├── src/app/
+│       ├── app.ts · app.html · app.scss · app.routes.ts · app.config.ts · app.spec.ts
 │       ├── core/
-│       │   ├── guards/       auth.guard.ts · role.guard.ts
+│       │   ├── guards/       auth.guard.ts · role.guard.ts  (only role.guard is wired into routes)
 │       │   ├── interceptors/ auth.interceptor.ts
 │       │   ├── models/       user.model.ts · event.model.ts · client.model.ts
 │       │   └── services/     auth.service.ts · event.service.ts · client.service.ts
 │       │                     hateoas.service.ts (follows `_links`, unwraps HAL `_embedded` collections)
-│       └── features/
-│           ├── auth/         login/
-│           ├── events/       event-list/ · event-detail/ · create-event/ · edit-event/
-│           ├── admin/        manage-user/update-role.component   (route: /manage-user — ADMIN only)
-│           └── profile/      profile.component (ts · html · scss) — also handles self-registration
+│       ├── features/
+│       │   ├── auth/         login/
+│       │   ├── events/       event-list/ · event-detail/ · create-event/ · edit-event/
+│       │   ├── admin/        manage-user/update-role.component   (route: /manage-user — ADMIN only)
+│       │   └── profile/      profile.component (ts · html · scss) — also handles self-registration
+│       └── shared/           navbar/ · unauthorized/
 │   ├── nginx.conf            serves the built SPA and proxies /api/* (baked into the image)
 │   └── Dockerfile
 │
@@ -836,27 +911,33 @@ Copy `.env.example` to `.env`:
 cp .env.example .env
 ```
 
+The placeholders in the table below are the literal values `.env.example` ships, and everything except `JWT_SECRET` boots as-is. `JWT_SECRET` must be replaced before the first start: `JwtService` parses it as hex, so the placeholder string is rejected and auth-service fails to come up.
+
+```bash
+sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 32)|" .env
+```
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AUTH_DB_NAME` | `auth_db` | Auth service MySQL database |
 | `AUTH_DB_USER` | `auth_user` | Auth service DB username |
-| `AUTH_DB_PASSWORD` | — | Auth service DB password |
-| `AUTH_DB_ROOT_PASSWORD` | — | MySQL root password |
+| `AUTH_DB_PASSWORD` | `change_me` | Auth service DB password |
+| `AUTH_DB_ROOT_PASSWORD` | `change_me_root` | MySQL root password |
 | `AUTH_DB_PORT` | `3306` | Host port for auth-db |
 | `EVENT_DB_NAME` | `event_db` | Event service MySQL database |
 | `EVENT_DB_USER` | `event_user` | Event service DB username |
-| `EVENT_DB_PASSWORD` | — | Event service DB password |
-| `EVENT_DB_ROOT_PASSWORD` | — | MySQL root password |
+| `EVENT_DB_PASSWORD` | `change_me` | Event service DB password |
+| `EVENT_DB_ROOT_PASSWORD` | `change_me_root` | MySQL root password |
 | `EVENT_DB_PORT` | `3307` | Host port for event-db |
 | `CLIENT_DB_NAME` | `client_db` | Client service MongoDB database |
 | `CLIENT_DB_USER` | `client_user` | MongoDB username |
-| `CLIENT_DB_PASSWORD` | — | MongoDB password |
+| `CLIENT_DB_PASSWORD` | `change_me` | MongoDB password |
 | `CLIENT_DB_PORT` | `27017` | Host port for client-db |
 | `REDIS_PORT` | `6379` | Host port for token-store (Redis) |
 | `JWT_SECRET` | — | 64-character hex string (256-bit HS256 key) — generate with `openssl rand -hex 32` |
 | `JWT_EXPIRATION_MS` | `86400000` | Token validity in ms (default 24 h) |
 | `ADMIN_EMAIL` | `admin@platform.com` | Email of the seeded admin account |
-| `ADMIN_PASSWORD` | — | Password of the seeded admin account |
+| `ADMIN_PASSWORD` | `change_me_admin` | Password of the seeded admin account |
 
 ---
 
@@ -904,7 +985,7 @@ docker compose down -v       # wipe all data volumes
 | Auth REST | `http://localhost:8090` | Direct — debug only |
 | Event REST | `http://localhost:8080` | Direct — debug only |
 | Client REST | `http://localhost:8081` | Direct — debug only |
-| Auth gRPC | `localhost:9090` | Container-internal only |
+| Auth gRPC | `auth-service:9090` | Not published to the host — reachable only inside the compose network |
 | Auth DB | `localhost:3306` | MySQL |
 | Event DB | `localhost:3307` | MySQL |
 | Client DB | `localhost:27017` | MongoDB |
@@ -918,9 +999,15 @@ docker compose down -v       # wipe all data volumes
 |------|---------|
 | Java | 25 |
 | Maven | 3.9+ |
-| Node.js | 20+ LTS |
+| Node.js | 22 LTS (the version CI runs) |
 | Angular CLI | latest |
 | Docker Desktop | latest |
+
+Each service falls back to the values in `.env.example` when the corresponding env var is unset, so the databases started by compose are reachable with no extra configuration. The one exception is `JWT_SECRET`, which has no default on purpose — auth-service will not start without it:
+
+```bash
+export JWT_SECRET=$(openssl rand -hex 32)
+```
 
 ```bash
 # 1. Start databases
@@ -950,7 +1037,7 @@ Created automatically on first startup by `DataSeeder` using the `ADMIN_EMAIL` a
 | Field | Env var | `.env` default |
 |-------|---------|----------------|
 | Email | `ADMIN_EMAIL` | `admin@platform.com` |
-| Password | `ADMIN_PASSWORD` | *(set in `.env`)* |
+| Password | `ADMIN_PASSWORD` | `change_me_admin` — replace it |
 | Role | — | `ADMIN` |
 
 > Always set strong credentials in `.env` before any shared or production deployment.

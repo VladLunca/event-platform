@@ -37,7 +37,8 @@ public class PackageController {
 
     @GetMapping
     public ResponseEntity<CollectionModel<EntityModel<PackageResponse>>> listPackages(
-            @PathVariable Long eventId,    @RequestHeader("Authorization") String authHeader) {
+            @PathVariable Long eventId,
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
 
         List<EntityModel<PackageResponse>> models = packageService.listPackages(eventId)
                 .stream()

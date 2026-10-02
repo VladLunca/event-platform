@@ -29,6 +29,7 @@ message ValidateResponse {
   bool   valid   = 1;
   string user_id = 2;
   string role    = 3;
+  string email   = 4;
 }
 
 message LogoutRequest {
