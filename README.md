@@ -837,7 +837,7 @@ event-platform/
 │       └── service/          JwtServiceTest.java · TokenBlacklistIntegrationTest.java
 │
 ├── event-service/
-│   ├── src/main/java/com/example/auth_service/      ← note: package is auth_service
+│   ├── src/main/java/com/example/event_service/
 │   │   ├── EventServiceApplication.java
 │   │   ├── controller/       EventController.java · PackageController.java
 │   │   │                     TicketController.java · TicketLookupController.java
@@ -852,7 +852,7 @@ event-platform/
 │   │   └── service/          EventService.java · PackageService.java · TicketService.java
 │   │                         TokenValidationService.java
 │   ├── src/main/proto/       auth.proto
-│   └── src/test/java/com/example/auth_service/
+│   └── src/test/java/com/example/event_service/
 │       ├── EventServiceApplicationTests.java   (contextLoads smoke test)
 │       ├── controller/       TicketLookupControllerTest.java · PackageControllerTest.java
 │       └── service/          TicketServiceTest.java · TicketPurchaseConcurrencyTest.java
